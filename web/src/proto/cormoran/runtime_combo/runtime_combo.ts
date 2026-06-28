@@ -69,6 +69,12 @@ export interface SetSlowReleaseRequest {
   persist: boolean;
 }
 
+export interface SaveRequest {
+}
+
+export interface DiscardRequest {
+}
+
 export interface Request {
   listCombos?: ListCombosRequest | undefined;
   getCombo?: GetComboRequest | undefined;
@@ -78,6 +84,8 @@ export interface Request {
   getGlobalSettings?: GetGlobalSettingsRequest | undefined;
   setTimeoutMs?: SetTimeoutMsRequest | undefined;
   setSlowRelease?: SetSlowReleaseRequest | undefined;
+  save?: SaveRequest | undefined;
+  discard?: DiscardRequest | undefined;
 }
 
 export interface ListCombosResponse {
@@ -835,6 +843,74 @@ export const SetSlowReleaseRequest: MessageFns<SetSlowReleaseRequest> = {
   },
 };
 
+function createBaseSaveRequest(): SaveRequest {
+  return {};
+}
+
+export const SaveRequest: MessageFns<SaveRequest> = {
+  encode(_: SaveRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): SaveRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseSaveRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<SaveRequest>): SaveRequest {
+    return SaveRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<SaveRequest>): SaveRequest {
+    const message = createBaseSaveRequest();
+    return message;
+  },
+};
+
+function createBaseDiscardRequest(): DiscardRequest {
+  return {};
+}
+
+export const DiscardRequest: MessageFns<DiscardRequest> = {
+  encode(_: DiscardRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): DiscardRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseDiscardRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<DiscardRequest>): DiscardRequest {
+    return DiscardRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<DiscardRequest>): DiscardRequest {
+    const message = createBaseDiscardRequest();
+    return message;
+  },
+};
+
 function createBaseRequest(): Request {
   return {
     listCombos: undefined,
@@ -845,6 +921,8 @@ function createBaseRequest(): Request {
     getGlobalSettings: undefined,
     setTimeoutMs: undefined,
     setSlowRelease: undefined,
+    save: undefined,
+    discard: undefined,
   };
 }
 
@@ -873,6 +951,12 @@ export const Request: MessageFns<Request> = {
     }
     if (message.setSlowRelease !== undefined) {
       SetSlowReleaseRequest.encode(message.setSlowRelease, writer.uint32(66).fork()).join();
+    }
+    if (message.save !== undefined) {
+      SaveRequest.encode(message.save, writer.uint32(74).fork()).join();
+    }
+    if (message.discard !== undefined) {
+      DiscardRequest.encode(message.discard, writer.uint32(82).fork()).join();
     }
     return writer;
   },
@@ -948,6 +1032,22 @@ export const Request: MessageFns<Request> = {
           message.setSlowRelease = SetSlowReleaseRequest.decode(reader, reader.uint32());
           continue;
         }
+        case 9: {
+          if (tag !== 74) {
+            break;
+          }
+
+          message.save = SaveRequest.decode(reader, reader.uint32());
+          continue;
+        }
+        case 10: {
+          if (tag !== 82) {
+            break;
+          }
+
+          message.discard = DiscardRequest.decode(reader, reader.uint32());
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -985,6 +1085,12 @@ export const Request: MessageFns<Request> = {
       : undefined;
     message.setSlowRelease = (object.setSlowRelease !== undefined && object.setSlowRelease !== null)
       ? SetSlowReleaseRequest.fromPartial(object.setSlowRelease)
+      : undefined;
+    message.save = (object.save !== undefined && object.save !== null)
+      ? SaveRequest.fromPartial(object.save)
+      : undefined;
+    message.discard = (object.discard !== undefined && object.discard !== null)
+      ? DiscardRequest.fromPartial(object.discard)
       : undefined;
     return message;
   },

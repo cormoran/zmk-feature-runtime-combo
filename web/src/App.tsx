@@ -315,6 +315,32 @@ export function RPCTestSection() {
     }
   };
 
+  const applyPendingSettings = async (action: "save" | "discard") => {
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const resp = await callRuntimeComboRPC(
+        Request.create(action === "save" ? { save: {} } : { discard: {} })
+      );
+      if (resp?.error) {
+        setMessage(resp.error.message);
+        return;
+      }
+      const affectedCount = resp?.status?.affectedCount ?? 0;
+      setMessage(
+        action === "save"
+          ? `Saved ${affectedCount} runtime combo settings`
+          : `Discarded ${affectedCount} runtime combo settings`
+      );
+      await refreshCombos();
+      await refreshGlobalSettings();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RPC failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const keyboardAbyssPreview = {
     type: "raw",
     zmk: `behavior#${draft.behaviorId} ${draft.param1} ${draft.param2}`,
@@ -331,6 +357,23 @@ export function RPCTestSection() {
           </div>
           <button className="btn" disabled={isLoading} onClick={refreshCombos}>
             Refresh
+          </button>
+        </div>
+
+        <div className="actions">
+          <button
+            className="btn primary"
+            disabled={isLoading}
+            onClick={() => applyPendingSettings("save")}
+          >
+            Save Pending
+          </button>
+          <button
+            className="btn"
+            disabled={isLoading}
+            onClick={() => applyPendingSettings("discard")}
+          >
+            Discard Pending
           </button>
         </div>
 
