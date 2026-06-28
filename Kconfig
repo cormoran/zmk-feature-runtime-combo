@@ -1,10 +1,35 @@
-config ZMK_TEMPLATE_FEATURE
-    bool "Enable template feature"
+config ZMK_RUNTIME_COMBO
+    bool "Enable runtime combo"
+    select SETTINGS
+    select ZMK_CUSTOM_SETTINGS
+    select ZMK_BEHAVIOR_LOCAL_IDS
+    help
+      Enable combos that can be changed at runtime through the custom Studio RPC
+      subsystem.
 
-if ZMK_TEMPLATE_FEATURE
+if ZMK_RUNTIME_COMBO
 
-config ZMK_TEMPLATE_FEATURE_STUDIO_RPC
-    bool "Enable template feature custom Studio RPC"
+config ZMK_RUNTIME_COMBO_STUDIO_RPC
+    bool "Enable runtime combo custom Studio RPC"
     depends on ZMK_STUDIO
+    select ZMK_CUSTOM_SETTINGS_STUDIO_RPC
+
+config ZMK_RUNTIME_COMBO_MAX_COMBOS
+    int "Maximum runtime combos"
+    default 8
+    range 1 16
+
+config ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO
+    int "Maximum positions per runtime combo"
+    default 16
+    range 2 16
+
+config ZMK_RUNTIME_COMBO_DEFAULT_TIMEOUT_MS
+    int "Default runtime combo timeout"
+    default 50
+    range 1 65535
+
+config ZMK_RUNTIME_COMBO_TEST
+    bool "Enable runtime combo self-test setup"
 
 endif

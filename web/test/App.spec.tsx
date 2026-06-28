@@ -18,20 +18,16 @@ describe("App Component", () => {
     it("should render the application header", () => {
       render(<App />);
 
-      expect(screen.getByText(/ZMK Module Template/i)).toBeInTheDocument();
-      expect(screen.getByText(/Custom Studio RPC Demo/i)).toBeInTheDocument();
+      expect(screen.getByText(/Runtime Combo/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/runtime configurable ZMK combos/i)
+      ).toBeInTheDocument();
     });
 
     it("should render connection button when disconnected", () => {
       render(<App />);
 
       expect(screen.getByText(/Connect Serial/i)).toBeInTheDocument();
-    });
-
-    it("should render footer", () => {
-      render(<App />);
-
-      expect(screen.getByText(/Template Module/i)).toBeInTheDocument();
     });
   });
 
@@ -45,7 +41,7 @@ describe("App Component", () => {
     it("should connect to device when connect button is clicked", async () => {
       mocks.mockSuccessfulConnection({
         deviceName: "Test Keyboard",
-        subsystems: ["your_name__template"],
+        subsystems: ["cormoran__runtime_combo"],
       });
 
       const { connect: serial_connect } =
@@ -67,7 +63,9 @@ describe("App Component", () => {
       });
 
       expect(screen.getByText(/Disconnect/i)).toBeInTheDocument();
-      expect(screen.getByText(/RPC Test/i)).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: /Runtime Combos/i })
+      ).toBeInTheDocument();
     });
   });
 });

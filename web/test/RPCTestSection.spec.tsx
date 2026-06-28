@@ -19,10 +19,14 @@ describe("RPCTestSection Component", () => {
         </ZMKAppProvider>
       );
 
-      expect(screen.getByText(/RPC Test/i)).toBeInTheDocument();
-      expect(screen.getByText(/Send a sample request/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Value:/i)).toBeInTheDocument();
-      expect(screen.getByText(/Send Request/i)).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: /Runtime Combos/i })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: /Combo Editor/i })
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText(/Positions/i)).toBeInTheDocument();
+      expect(screen.getByText(/Save Combo/i)).toBeInTheDocument();
     });
 
     it("should show default input value", () => {
@@ -36,8 +40,8 @@ describe("RPCTestSection Component", () => {
         </ZMKAppProvider>
       );
 
-      const input = screen.getByLabelText(/Value:/i) as HTMLInputElement;
-      expect(input.value).toBe("42");
+      const input = screen.getByLabelText(/Positions/i) as HTMLInputElement;
+      expect(input.value).toBe("0, 1");
     });
   });
 
@@ -55,11 +59,11 @@ describe("RPCTestSection Component", () => {
       );
 
       expect(
-        screen.getByText(/Subsystem "your_name__template" not found/i)
+        screen.getByText(/Subsystem "cormoran__runtime_combo" not found/i)
       ).toBeInTheDocument();
       expect(
         screen.getByText(
-          /Make sure your firmware includes the template module/i
+          /Make sure your firmware includes the runtime combo module/i
         )
       ).toBeInTheDocument();
     });

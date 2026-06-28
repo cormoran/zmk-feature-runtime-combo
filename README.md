@@ -1,157 +1,104 @@
-# cormoran's ZMK Module Template for ZMK (with Custom Studio RPC)
+# zmk-feature-runtime-combo
 
 ![ZMK Version](https://img.shields.io/badge/ZMK-master-blue)
-[![Test](https://github.com/cormoran/zmk-module-template/actions/workflows/zmk-module.yml/badge.svg?branch=main)](https://github.com/cormoran/zmk-module-template/actions/workflows/zmk-module.yml) [![Devcontainer](https://github.com/cormoran/zmk-module-template/actions/workflows/devcontainer.yml/badge.svg?branch=main)](https://github.com/cormoran/zmk-module-template/actions/workflows/devcontainer.yml)
+[![Test](https://github.com/cormoran/zmk-feature-runtime-combo/actions/workflows/zmk-module.yml/badge.svg?branch=main)](https://github.com/cormoran/zmk-feature-runtime-combo/actions/workflows/zmk-module.yml)
 
-This repository contains a template for a ZMK module with Web UI using the **unofficial** custom ZMK Studio RPC protocol.
+Runtime Combo is a ZMK module that adds combos which can be edited at runtime
+through the unofficial custom ZMK Studio RPC protocol.
 
-It's extended from ZMK official template with [zmk-west-commands](https://github.com/cormoran/zmk-west-commands), test code template, coding agent support, and custom Studio RPC protocol support.
+A combo watches multiple key positions. When all configured positions are pressed
+within the combo timeout, the configured ZMK behavior is invoked. Each combo is
+stored by numeric slot internally and can also have a display name for the Web UI.
 
-## Summary
+## Features
 
-This template includes:
+- Runtime editable combo slots.
+- Separate RPC methods for combo content and combo names to keep request payloads
+  small.
+- Compact binary storage for combo bodies.
+- Name and combo arrays stored through
+  [zmk-feature-custom-settings](https://github.com/cormoran/zmk-feature-custom-settings).
+- React Web UI for listing and editing combo slots.
 
-- **Firmware**: Sample custom Studio RPC handler (`src/studio/template_handler.c`)
-- **Protocol**: Protobuf definition (`proto/your-name/template/template.proto`)
-- **Web UI**: React + TypeScript app (`web/`) using [@cormoran/zmk-studio-react-hook](https://github.com/cormoran/react-zmk-studio)
-- **Tests**: Firmware unit tests (`tests/studio/`) and build tests (`tests/zmk-config/`)
+## Storage Format
 
-Read through the [ZMK Module Creation](https://zmk.dev/docs/development/module-creation) page for details on how to configure this template.
+The combo body is saved as one packed byte-array custom setting per combo slot:
 
-## More Info
+```text
+version, flags, position_count, timeout_ms, layer_mask, behavior_id, param1, param2, positions[]
+```
 
-For more info on modules, you can read through through the [Zephyr modules page](https://docs.zephyrproject.org/3.5.0/develop/modules.html) and [ZMK's page on using modules](https://zmk.dev/docs/features/modules). [Zephyr's west manifest page](https://docs.zephyrproject.org/3.5.0/develop/west/manifest.html#west-manifests) may also be of use.
+`positions[]` are 16-bit values, and behavior parameters are 32-bit values. The
+name is saved separately as a string-array custom setting with the same index.
 
-## Module User Guide
+## User Guide
 
-1. Add dependency to your `config/west.yml`. Note: this module requires a patched ZMK with custom Studio RPC support.
+1. Add the module to `config/west.yml`.
 
    ```yml
    manifest:
-       remotes:
-           ...
-           - name: cormoran
-           url-base: https://github.com/cormoran
-       projects:
-           ...
-           - name: zmk-module-template
-           remote: cormoran
-           revision: main+custom-studio-protocol # or latest commit hash
-           import: true
-           ...
-           # Required: patched ZMK with custom Studio RPC support
-           - name: zmk
-           remote: cormoran
-           revision: main+custom-studio-protocol
-           import:
-               file: app/west.yml
+     remotes:
+       - name: cormoran
+         url-base: https://github.com/cormoran
+     projects:
+       - name: zmk-feature-runtime-combo
+         remote: cormoran
+         revision: main
+         import: true
    ```
 
-2. Enable flags in your `config/<shield>.conf`
+   This module imports `zmk-feature-custom-settings`.
+
+2. Enable the feature in `config/<shield>.conf`.
 
    ```conf
-   CONFIG_ZMK_TEMPLATE_FEATURE=y
+   CONFIG_ZMK_RUNTIME_COMBO=y
 
-   # Optionally enable custom Studio RPC
+   # Required for the custom Studio RPC Web UI
    CONFIG_ZMK_STUDIO=y
-   CONFIG_ZMK_TEMPLATE_FEATURE_STUDIO_RPC=y
-   CONFIG_ZMK_CUSTOM_SETTINGS=y
-   CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC=y
+   CONFIG_ZMK_RUNTIME_COMBO_STUDIO_RPC=y
    CONFIG_ZMK_STUDIO_RPC_RX_BUF_SIZE=128
+   CONFIG_ZMK_STUDIO_RPC_CUSTOM_SUBSYSTEM_REQUEST_PAYLOAD_MAX_BYTES=96
    CONFIG_ZMK_LOW_PRIORITY_THREAD_STACK_SIZE=2048
    ```
 
-3. Implement your custom protocol by editing:
-   - `proto/your-name/template/template.proto` — message types
-   - `src/studio/template_handler.c` — firmware RPC handler
-   - `web/src/App.tsx` — web UI
+3. Open the Web UI from the custom subsystem URL or run it locally:
 
-### Web UI
+   ```bash
+   cd web
+   npm install
+   npm run dev
+   ```
 
-See [web/README.md](./web/README.md) for web UI development instructions.
+4. Connect to the keyboard, choose a slot, and set:
 
-### Publishing Web UI
+   - Name: display name only.
+   - Positions: comma-separated key positions, such as `0, 1`.
+   - Behavior ID, Param 1, Param 2: the same binding fields ZMK Studio uses.
+   - Timeout: maximum interval in milliseconds from the first key press.
+   - Layer mask: `0` means all layers.
 
-**GitHub Pages**: Visit `Actions > Test and Build Web UI > Run workflow` to deploy to `https://<account>.github.io/<repo>/`.
+Enable `Persist to settings` before saving if the combo should survive reboot.
 
-**Cloudflare Workers (PR previews)**: Configure `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets.
-
-## Module Development Guide
-
-### Setup for running test
-
-#### Option0: Dev container (recommended)
-
-Open this repository in VS Code with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers). The container automatically initializes the west workspace using the isolated layout.
-
-#### Option1: west workspace directory layout
-
-Set west topdir as parent of repository root and download dependencies under `../`.
-This layout is useful to reduce disk usage by sharing dependencies with other zephyr modules.
-The build result is located in `../build`.
+## Development
 
 ```bash
-mkdir west-workspace
-cd west-workspace # this directory becomes west workspace root (topdir)
-git clone <this repository>
-# rm -r .west # if exists to reset workspace
-west init -l . --mf west/west-test-workspace.yml
-west update --narrow
-west zephyr-export
-```
-
-#### Option2: isolated directory layout
-
-Set west topdir as repository root and download dependencies under `./dependencies`.
-This layout is useful if you don't want to share dependencies to other zephyr modules.
-Dev container and github actions uses this layout.
-The build result is located in `./build`.
-
-```bash
-git clone <this repository>
-cd <cloned directory>
-west init -l west --mf west-test-isolated.yml
-west update --narrow
-west zephyr-export
-```
-
-### Pre-commit
-
-Every commit need to pass pre-commit verification. The verification contains formatting code and running tests.
-
-```
-pip install pre-commit
-pre-commit install
-
-# Run pre-commit manually
-pre-commit run --all-files
-# Run for git staged files
-pre-commit run
-```
-
-### Running Test
-
-```bash
-# Run unit test + build test and verify the results
+# Run unit test + build test and verify results
 python3 -m unittest
+
 # Run build test directly
 west zmk-build tests/zmk-config
+
 # Run unit test directly
 west zmk-test tests -m .
+
 # Run web tests
 cd web && npm test
 ```
 
-### Sync changes from template
+The Web protobuf TypeScript files are generated with:
 
-Run `Actions > Sync Changes in Template > Run workflow` to get the latest template changes as a pull request.
-
-If the template contains changes in `.github/workflows/*`, register a GitHub personal access token as `GH_TOKEN` repository secret (`repo` + `workflow` scopes).
-
-### Coding agent on actions
-
-Actions for github copilot and claude are available.
-
-- Mention `@copilot`
-- Setup `ANTHROPIC_API_KEY` secret and mention `@claude`
-  - Or fix [claude.yml](./github/workflows/claude.yml) to use `CLAUDE_CODE_OAUTH_TOKEN`
+```bash
+cd web
+npm run generate
+```

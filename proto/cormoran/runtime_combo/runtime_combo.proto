@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package cormoran.runtime_combo;
+
+message BehaviorBinding {
+    uint32 behavior_id = 1;
+    uint32 param1 = 2;
+    uint32 param2 = 3;
+}
+
+message Combo {
+    uint32 index = 1;
+    string name = 2;
+    repeated uint32 key_positions = 3;
+    BehaviorBinding behavior = 4;
+    uint32 timeout_ms = 5;
+    uint32 layer_mask = 6;
+    bool slow_release = 7;
+    bool enabled = 8;
+}
+
+message ListCombosRequest {}
+
+message GetComboRequest { uint32 index = 1; }
+
+message SetComboRequest {
+    uint32 index = 1;
+    repeated uint32 key_positions = 2;
+    BehaviorBinding behavior = 3;
+    uint32 timeout_ms = 4;
+    uint32 layer_mask = 5;
+    bool slow_release = 6;
+    bool enabled = 7;
+    bool persist = 8;
+}
+
+message SetComboNameRequest {
+    uint32 index = 1;
+    string name = 2;
+    bool persist = 3;
+}
+
+message DeleteComboRequest {
+    uint32 index = 1;
+    bool persist = 2;
+}
+
+message Request {
+    oneof request_type {
+        ListCombosRequest list_combos = 1;
+        GetComboRequest get_combo = 2;
+        SetComboRequest set_combo = 3;
+        SetComboNameRequest set_combo_name = 4;
+        DeleteComboRequest delete_combo = 5;
+    }
+}
+
+message ListCombosResponse { repeated Combo combos = 1; }
+
+message GetComboResponse { Combo combo = 1; }
+
+message StatusResponse {
+    uint32 affected_count = 1;
+    string message = 2;
+}
+
+message ErrorResponse { string message = 1; }
+
+message Response {
+    oneof response_type {
+        ErrorResponse error = 1;
+        ListCombosResponse list_combos = 2;
+        GetComboResponse get_combo = 3;
+        StatusResponse status = 4;
+    }
+}
