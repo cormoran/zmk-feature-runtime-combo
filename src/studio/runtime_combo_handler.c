@@ -158,6 +158,7 @@ static int handle_get_global_settings(cormoran_runtime_combo_Response *resp) {
     result.has_settings = true;
     result.settings.timeout_ms = settings.timeout_ms;
     result.settings.slow_release = settings.slow_release;
+    result.settings.max_combo = settings.max_combo;
 
     resp->which_response_type = cormoran_runtime_combo_Response_get_global_settings_tag;
     resp->response_type.get_global_settings = result;

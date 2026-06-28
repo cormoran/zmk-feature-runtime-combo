@@ -32,7 +32,8 @@ version, flags, position_count, layer_mask, behavior_id, param1, param2, positio
 `positions[]` are 16-bit values, and behavior parameters are 32-bit values. The
 name is saved separately as a string-array custom setting with the same index.
 Timeout and slow-release mode are saved as separate global custom settings and
-apply to every runtime combo.
+apply to every runtime combo. The global settings RPC response also reports
+`max_combo`, the maximum number of combo slots configured in the firmware.
 
 ## User Guide
 
@@ -82,7 +83,8 @@ apply to every runtime combo.
 
 Set global timeout and slow-release mode in the Global Settings panel. Enable the
 corresponding persist checkbox before saving if the setting should survive
-reboot.
+reboot. The panel also shows the maximum number of runtime combo slots available
+on the connected firmware.
 
 ## Development
 

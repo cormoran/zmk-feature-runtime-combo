@@ -1,11 +1,21 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import {
   createConnectedMockZMKApp,
   ZMKAppProvider,
 } from "@cormoran/zmk-studio-react-hook/testing";
+import { call_rpc } from "@zmkfirmware/zmk-studio-ts-client";
 import { RPCTestSection, SUBSYSTEM_IDENTIFIER } from "../src/App";
+import { Response } from "../src/proto/cormoran/runtime_combo/runtime_combo";
+
+jest.mock("@zmkfirmware/zmk-studio-ts-client", () => ({
+  call_rpc: jest.fn(),
+}));
 
 describe("RPCTestSection Component", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   describe("With Subsystem", () => {
     it("should render RPC controls when subsystem is found", () => {
       const mockZMKApp = createConnectedMockZMKApp({
@@ -42,6 +52,49 @@ describe("RPCTestSection Component", () => {
 
       const input = screen.getByLabelText(/Positions/i) as HTMLInputElement;
       expect(input.value).toBe("0, 1");
+    });
+
+    it("should show max combo count from global settings", async () => {
+      const mockZMKApp = createConnectedMockZMKApp({
+        subsystems: [SUBSYSTEM_IDENTIFIER],
+      });
+      (call_rpc as jest.Mock)
+        .mockResolvedValueOnce({
+          custom: {
+            call: {
+              payload: Response.encode(
+                Response.create({ listCombos: { combos: [] } })
+              ).finish(),
+            },
+          },
+        })
+        .mockResolvedValueOnce({
+          custom: {
+            call: {
+              payload: Response.encode(
+                Response.create({
+                  getGlobalSettings: {
+                    settings: {
+                      timeoutMs: 75,
+                      slowRelease: true,
+                      maxCombo: 12,
+                    },
+                  },
+                })
+              ).finish(),
+            },
+          },
+        });
+
+      render(
+        <ZMKAppProvider value={mockZMKApp}>
+          <RPCTestSection />
+        </ZMKAppProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/Max combos/i)).toHaveValue(12);
+      });
     });
   });
 

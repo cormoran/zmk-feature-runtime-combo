@@ -305,6 +305,7 @@ int zmk_runtime_combo_read_global_settings(struct zmk_runtime_combo_global_setti
     *settings = (struct zmk_runtime_combo_global_settings){
         .timeout_ms = timeout_value.int32_value,
         .slow_release = slow_release_value.bool_value,
+        .max_combo = zmk_runtime_combo_max_count(),
     };
     return 0;
 }
