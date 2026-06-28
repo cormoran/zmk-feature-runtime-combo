@@ -1,5 +1,6 @@
 import os
 import platform
+import re
 import shutil
 import subprocess
 import unittest
@@ -10,7 +11,9 @@ from dataclasses import dataclass
 THIS_DIR = Path(__file__).parent.resolve()
 
 
-def run_west(args: list[str]) -> subprocess.CompletedProcess[str]:
+def run_west(
+    args: list[str], cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.setdefault("CMAKE_BUILD_PARALLEL_LEVEL", "1")
     env.setdefault("J", "1")
@@ -18,7 +21,7 @@ def run_west(args: list[str]) -> subprocess.CompletedProcess[str]:
         ["west", *args],
         capture_output=True,
         text=True,
-        cwd=THIS_DIR,
+        cwd=cwd or THIS_DIR,
         env=env,
     )
 
@@ -37,13 +40,31 @@ class ConfigAndDeviceTree:
 
 
 class WestCommandsTests(unittest.TestCase):
+    WEST_CWD: Path
     WEST_TOPDIR: Path
     BUILD_DIR: Path
+    CUSTOM_SETTINGS_MODULE: Path
+    ZMK_APP: Path
 
     @classmethod
     def setUpClass(cls):
-        cls.WEST_TOPDIR = Path(run_west(["topdir"]).stdout.strip())
+        for cwd in (THIS_DIR, THIS_DIR.parent):
+            if run_west(["zmk-build", "--help"], cwd=cwd).returncode == 0:
+                cls.WEST_CWD = cwd
+                break
+        else:
+            raise AssertionError("west zmk-build extension is unavailable")
+
+        cls.WEST_TOPDIR = Path(run_west(["topdir"], cwd=cls.WEST_CWD).stdout.strip())
         cls.BUILD_DIR = THIS_DIR / "build"
+        custom_settings_path = run_west(
+            ["list", "-f", "{path}", "zmk-feature-custom-settings"], cwd=cls.WEST_CWD
+        ).stdout.strip()
+        cls.CUSTOM_SETTINGS_MODULE = cls.WEST_TOPDIR / custom_settings_path
+        zmk_path = run_west(
+            ["list", "-f", "{path}", "zmk"], cwd=cls.WEST_CWD
+        ).stdout.strip()
+        cls.ZMK_APP = cls.WEST_TOPDIR / zmk_path / "app"
 
     @unittest.skipUnless(
         platform.system() == "Linux", "zmk-test is only supported on Linux"
@@ -53,24 +74,7 @@ class WestCommandsTests(unittest.TestCase):
             test_build_dir = self.BUILD_DIR / THIS_DIR.name / test_case
             shutil.rmtree(test_build_dir, ignore_errors=True)
 
-            result = run_west(
-                [
-                    "zmk-test",
-                    f"tests/{test_case}",
-                    "-m",
-                    ".",
-                    "-d",
-                    str(test_build_dir),
-                ]
-            )
-            output = (
-                result.stdout
-                + result.stderr
-                + self._zmk_test_logs(test_build_dir, test_case)
-            )
-            self.assertEqual(result.returncode, 0, output)
-            self.assertIn(f"PASS: {test_case}", result.stdout, output)
-            self.assertNotIn("FAILED: ", result.stdout, output)
+            self._run_zmk_test_case(test_case, test_build_dir)
 
     def test_zmk_build(self):
         self._test_zmk_build(
@@ -134,8 +138,11 @@ class WestCommandsTests(unittest.TestCase):
             result = run_west(
                 [
                     "zmk-build",
-                    "tests/zmk-config",
+                    str(THIS_DIR / "tests" / "zmk-config"),
                     "-q",
+                    "-m",
+                    str(THIS_DIR),
+                    str(self.CUSTOM_SETTINGS_MODULE),
                     "-af",
                     f"^{artifact}$",
                     "-d",
@@ -145,7 +152,8 @@ class WestCommandsTests(unittest.TestCase):
                         f"-DUSER_CACHE_DIR={zephyr_cache_dir} "
                         f"-DZEPHYR_TOOLCHAIN_CAPABILITY_CACHE_DIR={zephyr_cache_dir / 'ToolchainCapabilityDatabase'}"
                     ),
-                ]
+                ],
+                cwd=self.WEST_CWD,
             )
             self.assertEqual(
                 result.returncode,
@@ -173,6 +181,80 @@ class WestCommandsTests(unittest.TestCase):
                 (artifact_dir / "zmk.uf2").exists(),
                 f"{artifact} zmk.uf2 is missing in {artifact_dir}",
             )
+
+    def _run_zmk_test_case(self, test_case: str, build_dir: Path):
+        test_path = THIS_DIR / "tests" / test_case
+        case_build_dir = build_dir / "tests" / test_case
+        case_build_dir.mkdir(parents=True, exist_ok=True)
+        extra_modules = f"{THIS_DIR};{self.CUSTOM_SETTINGS_MODULE}"
+
+        build_result = run_west(
+            [
+                "build",
+                "-s",
+                str(self.ZMK_APP),
+                "-d",
+                str(case_build_dir),
+                "-b",
+                "native_sim//zmk_test_mock",
+                "-p",
+                "--",
+                "-DCONFIG_ASSERT=y",
+                f"-DZMK_CONFIG={test_path}",
+                f"-DZMK_EXTRA_MODULES={extra_modules}",
+            ],
+            cwd=self.WEST_CWD,
+        )
+        build_log = case_build_dir / "build.log"
+        build_log.write_text(build_result.stdout + build_result.stderr)
+        self.assertEqual(
+            build_result.returncode,
+            0,
+            f"{test_case} did not build\n{self._zmk_test_logs(build_dir, test_case)}",
+        )
+
+        run_result = subprocess.run(
+            [str(case_build_dir / "zephyr" / "zmk.exe")],
+            capture_output=True,
+            text=True,
+            cwd=THIS_DIR,
+        )
+        full_log = "".join(
+            re.sub(r".*> ", "", line)
+            for line in (run_result.stdout + run_result.stderr).splitlines(True)
+        )
+        full_log_path = case_build_dir / "keycode_events_full.log"
+        full_log_path.write_text(full_log)
+        self.assertEqual(
+            run_result.returncode,
+            0,
+            f"{test_case} executable failed\n{self._zmk_test_logs(build_dir, test_case)}",
+        )
+
+        patterns = test_path / "events.patterns"
+        filtered = subprocess.run(
+            ["sed", "-n", "-f", str(patterns)],
+            input=full_log,
+            capture_output=True,
+            text=True,
+        )
+        keycode_log_path = case_build_dir / "keycode_events.log"
+        keycode_log_path.write_text(filtered.stdout)
+        self.assertEqual(
+            filtered.returncode,
+            0,
+            f"{test_case} event filtering failed\n{filtered.stderr}",
+        )
+
+        expected = (test_path / "keycode_events.snapshot").read_text()
+        self.assertEqual(
+            self._normalize_snapshot(expected),
+            self._normalize_snapshot(filtered.stdout),
+            f"{test_case} snapshot mismatch\n{self._zmk_test_logs(build_dir, test_case)}",
+        )
+
+    def _normalize_snapshot(self, text: str) -> list[str]:
+        return [line.rstrip() for line in text.splitlines()]
 
     def _test_strings_in_file(
         self, file_path: Path, expected_strings: list[str | NotFound], hint: str

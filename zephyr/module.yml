@@ -4,8 +4,8 @@
 name: zmk-feature-runtime-combo
 build:
   # List your dependencies
-  # depends:
-  #  - zmk-example-dependency
+  depends:
+    - zmk-feature-custom-settings
   # Folder containing a "CMakeLists.txt" (. = root)
   cmake: .
   # Kconfig filepath

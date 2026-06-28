@@ -208,7 +208,7 @@ static int combo_to_packed(const struct zmk_runtime_combo_config *combo,
         return -EINVAL;
     }
     zmk_behavior_local_id_t behavior_id = zmk_behavior_get_local_id(combo->behavior.behavior_dev);
-    if (behavior_id == UINT16_MAX) {
+    if (behavior_id == 0 || behavior_id == UINT16_MAX) {
         return -ENODEV;
     }
     int ret = zmk_behavior_validate_binding(&combo->behavior);
@@ -459,41 +459,20 @@ static int count_candidates_for_position(int32_t position, int64_t timestamp) {
     uint8_t highest_active_layer = zmk_keymap_highest_layer_active();
     uint32_t combo_count = zmk_runtime_combo_count();
 
-#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
-    LOG_DBG("Runtime combo candidate check: position=%d timestamp=%lld pending=%u count=%u",
-            position, timestamp, pending_count, combo_count);
-#endif
-
     for (uint32_t i = 0; i < combo_count; i++) {
         struct zmk_runtime_combo_config combo;
-        int ret = read_enabled_combo(i, &combo);
-        if (ret < 0) {
-#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
-            LOG_DBG("Runtime combo %u skipped: read ret=%d", i, ret);
-#endif
+        if (read_enabled_combo(i, &combo) < 0) {
             continue;
         }
-        bool contains_position = combo_contains_position(&combo, position);
-        bool active_on_layer = combo_active_on_layer(&combo, highest_active_layer);
-        bool quick_tap = is_quick_tap(&combo, timestamp);
-        if (!contains_position || !active_on_layer || quick_tap) {
-#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
-            LOG_DBG("Runtime combo %u skipped: contains=%d active_layer=%d quick_tap=%d", i,
-                    contains_position, active_on_layer, quick_tap);
-#endif
+        if (!combo_contains_position(&combo, position) ||
+            !combo_active_on_layer(&combo, highest_active_layer) ||
+            is_quick_tap(&combo, timestamp)) {
             continue;
         }
         if (pending_count == 0 || combo_matches_pending(&combo, timestamp)) {
             count++;
-#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
-        } else {
-            LOG_DBG("Runtime combo %u skipped: pending mismatch", i);
-#endif
         }
     }
-#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
-    LOG_DBG("Runtime combo candidates for position %d: %d", position, count);
-#endif
     return count;
 }
 
@@ -700,11 +679,48 @@ static void combo_timeout_handler(struct k_work *item) {
     }
 }
 
+#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
+static bool runtime_combo_test_setup_done;
+
+static int runtime_combo_test_setup(void) {
+    if (runtime_combo_test_setup_done) {
+        return 0;
+    }
+
+    const char *key_press = "key_press";
+    zmk_behavior_local_id_t behavior_id = zmk_behavior_get_local_id(key_press);
+    if (behavior_id == 0 || behavior_id == UINT16_MAX) {
+        LOG_ERR("Runtime combo test cannot find key_press behavior");
+        return -ENODEV;
+    }
+
+    struct zmk_runtime_combo_config combo = {
+        .enabled = true,
+        .key_position_len = 2,
+        .behavior = {.behavior_dev = key_press, .param1 = B},
+        .key_positions = {0, 1},
+    };
+
+    int ret = zmk_runtime_combo_write(0, &combo, false);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo test setup failed: %d", ret);
+        return ret;
+    }
+
+    runtime_combo_test_setup_done = true;
+    LOG_INF("PASS: runtime_combo_test_setup");
+    return 0;
+}
+#endif
+
 static int position_state_changed_listener(const zmk_event_t *eh) {
     struct zmk_position_state_changed *data = as_zmk_position_state_changed(eh);
     if (!data) {
         return ZMK_EV_EVENT_BUBBLE;
     }
+#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
+    runtime_combo_test_setup();
+#endif
     return data->state ? position_state_down(data) : position_state_up(data);
 }
 
@@ -742,32 +758,3 @@ static int runtime_combo_init(void) {
 }
 
 SYS_INIT(runtime_combo_init, APPLICATION, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
-
-#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
-#define RUNTIME_COMBO_TEST_INIT_PRIORITY 91
-
-static int runtime_combo_test_init(void) {
-    const char *key_press = "key_press";
-    if (zmk_behavior_get_local_id(key_press) == UINT16_MAX) {
-        LOG_ERR("Runtime combo test cannot find key_press behavior");
-        return -ENODEV;
-    }
-
-    struct zmk_runtime_combo_config combo = {
-        .enabled = true,
-        .key_position_len = 2,
-        .behavior = {.behavior_dev = key_press, .param1 = B},
-        .key_positions = {0, 1},
-    };
-
-    int ret = zmk_runtime_combo_write(0, &combo, false);
-    if (ret < 0) {
-        LOG_ERR("Runtime combo test setup failed: %d", ret);
-        return ret;
-    }
-    LOG_INF("PASS: runtime_combo_test_setup");
-    return 0;
-}
-
-SYS_INIT(runtime_combo_test_init, APPLICATION, RUNTIME_COMBO_TEST_INIT_PRIORITY);
-#endif
