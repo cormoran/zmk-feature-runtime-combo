@@ -29,6 +29,7 @@ struct zmk_runtime_combo_config {
 struct zmk_runtime_combo_global_settings {
     uint16_t timeout_ms;
     bool slow_release;
+    uint32_t max_combo;
 };
 
 int zmk_runtime_combo_read(uint32_t index, struct zmk_runtime_combo_config *combo);

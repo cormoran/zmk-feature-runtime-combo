@@ -20,6 +20,7 @@ message Combo {
 message GlobalSettings {
     uint32 timeout_ms = 1;
     bool slow_release = 2;
+    uint32 max_combo = 3;
 }
 
 message ListCombosRequest {}

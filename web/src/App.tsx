@@ -32,6 +32,7 @@ type ComboDraft = {
 type GlobalSettingsDraft = {
   timeoutMs: number;
   slowRelease: boolean;
+  maxCombo: number;
   persist: boolean;
 };
 
@@ -50,6 +51,7 @@ const emptyDraft: ComboDraft = {
 const emptyGlobalSettings: GlobalSettingsDraft = {
   timeoutMs: 50,
   slowRelease: false,
+  maxCombo: 0,
   persist: false,
 };
 
@@ -153,6 +155,7 @@ export function RPCTestSection() {
         setGlobalSettings({
           timeoutMs: settings.timeoutMs || 50,
           slowRelease: settings.slowRelease,
+          maxCombo: settings.maxCombo,
           persist: false,
         });
       } else if (resp?.error) {
@@ -409,6 +412,10 @@ export function RPCTestSection() {
         </div>
 
         <div className="form-grid">
+          <label>
+            Max combos
+            <input type="number" value={globalSettings.maxCombo} readOnly />
+          </label>
           <label>
             Timeout ms
             <input

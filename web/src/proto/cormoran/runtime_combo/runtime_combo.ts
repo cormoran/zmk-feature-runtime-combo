@@ -27,6 +27,7 @@ export interface Combo {
 export interface GlobalSettings {
   timeoutMs: number;
   slowRelease: boolean;
+  maxCombo: number;
 }
 
 export interface ListCombosRequest {
@@ -308,7 +309,7 @@ export const Combo: MessageFns<Combo> = {
 };
 
 function createBaseGlobalSettings(): GlobalSettings {
-  return { timeoutMs: 0, slowRelease: false };
+  return { timeoutMs: 0, slowRelease: false, maxCombo: 0 };
 }
 
 export const GlobalSettings: MessageFns<GlobalSettings> = {
@@ -318,6 +319,9 @@ export const GlobalSettings: MessageFns<GlobalSettings> = {
     }
     if (message.slowRelease !== false) {
       writer.uint32(16).bool(message.slowRelease);
+    }
+    if (message.maxCombo !== 0) {
+      writer.uint32(24).uint32(message.maxCombo);
     }
     return writer;
   },
@@ -345,6 +349,14 @@ export const GlobalSettings: MessageFns<GlobalSettings> = {
           message.slowRelease = reader.bool();
           continue;
         }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.maxCombo = reader.uint32();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -361,6 +373,7 @@ export const GlobalSettings: MessageFns<GlobalSettings> = {
     const message = createBaseGlobalSettings();
     message.timeoutMs = object.timeoutMs ?? 0;
     message.slowRelease = object.slowRelease ?? false;
+    message.maxCombo = object.maxCombo ?? 0;
     return message;
   },
 };
