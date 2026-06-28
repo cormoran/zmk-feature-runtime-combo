@@ -7,9 +7,12 @@ import {
   ZMKAppContext,
 } from "@cormoran/zmk-studio-react-hook";
 import {
-  Combo,
   Request,
   Response,
+} from "./proto/cormoran/runtime_combo/runtime_combo";
+import type {
+  Combo,
+  GlobalSettings,
 } from "./proto/cormoran/runtime_combo/runtime_combo";
 
 export const SUBSYSTEM_IDENTIFIER = "cormoran__runtime_combo";
@@ -21,10 +24,14 @@ type ComboDraft = {
   behaviorId: number;
   param1: number;
   param2: number;
-  timeoutMs: number;
   layerMask: string;
-  slowRelease: boolean;
   enabled: boolean;
+  persist: boolean;
+};
+
+type GlobalSettingsDraft = {
+  timeoutMs: number;
+  slowRelease: boolean;
   persist: boolean;
 };
 
@@ -35,10 +42,14 @@ const emptyDraft: ComboDraft = {
   behaviorId: 0,
   param1: 0,
   param2: 0,
-  timeoutMs: 50,
   layerMask: "0",
-  slowRelease: false,
   enabled: true,
+  persist: false,
+};
+
+const emptyGlobalSettings: GlobalSettingsDraft = {
+  timeoutMs: 50,
+  slowRelease: false,
   persist: false,
 };
 
@@ -88,6 +99,8 @@ function App() {
 export function RPCTestSection() {
   const zmkApp = useContext(ZMKAppContext);
   const [combos, setCombos] = useState<Combo[]>([]);
+  const [globalSettings, setGlobalSettings] =
+    useState<GlobalSettingsDraft>(emptyGlobalSettings);
   const [draft, setDraft] = useState<ComboDraft>(emptyDraft);
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -127,12 +140,38 @@ export function RPCTestSection() {
     }
   }, [callRuntimeComboRPC, connection, subsystemIndex]);
 
+  const refreshGlobalSettings = useCallback(async () => {
+    if (!connection || subsystemIndex === undefined) return;
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const resp = await callRuntimeComboRPC(
+        Request.create({ getGlobalSettings: {} })
+      );
+      if (resp?.getGlobalSettings?.settings) {
+        const settings: GlobalSettings = resp.getGlobalSettings.settings;
+        setGlobalSettings({
+          timeoutMs: settings.timeoutMs || 50,
+          slowRelease: settings.slowRelease,
+          persist: false,
+        });
+      } else if (resp?.error) {
+        setMessage(resp.error.message);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RPC failed");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [callRuntimeComboRPC, connection, subsystemIndex]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void refreshCombos();
+      void refreshGlobalSettings();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [refreshCombos]);
+  }, [refreshCombos, refreshGlobalSettings]);
 
   if (!zmkApp) return null;
 
@@ -155,9 +194,7 @@ export function RPCTestSection() {
       behaviorId: combo.behavior?.behaviorId ?? 0,
       param1: combo.behavior?.param1 ?? 0,
       param2: combo.behavior?.param2 ?? 0,
-      timeoutMs: combo.timeoutMs || 50,
       layerMask: `0x${(combo.layerMask ?? 0).toString(16)}`,
-      slowRelease: combo.slowRelease,
       enabled: combo.enabled,
       persist: false,
     });
@@ -190,9 +227,7 @@ export function RPCTestSection() {
               param1: draft.param1,
               param2: draft.param2,
             },
-            timeoutMs: draft.timeoutMs,
             layerMask: parseLayerMask(),
-            slowRelease: draft.slowRelease,
             enabled: draft.enabled,
             persist: draft.persist,
           },
@@ -213,6 +248,48 @@ export function RPCTestSection() {
       );
       setMessage(nameResp?.error?.message ?? "Combo saved");
       await refreshCombos();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RPC failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveTimeoutMs = async () => {
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const resp = await callRuntimeComboRPC(
+        Request.create({
+          setTimeoutMs: {
+            timeoutMs: globalSettings.timeoutMs,
+            persist: globalSettings.persist,
+          },
+        })
+      );
+      setMessage(resp?.error?.message ?? "Timeout saved");
+      await refreshGlobalSettings();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RPC failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveSlowRelease = async () => {
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const resp = await callRuntimeComboRPC(
+        Request.create({
+          setSlowRelease: {
+            slowRelease: globalSettings.slowRelease,
+            persist: globalSettings.persist,
+          },
+        })
+      );
+      setMessage(resp?.error?.message ?? "Slow release saved");
+      await refreshGlobalSettings();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "RPC failed");
     } finally {
@@ -270,6 +347,86 @@ export function RPCTestSection() {
               <span>{combo.keyPositions.join(" + ") || "No positions"}</span>
             </button>
           ))}
+        </div>
+      </section>
+
+      <section className="panel editor">
+        <div className="section-heading">
+          <div>
+            <h2>Global Settings</h2>
+            <p>Applied to every runtime combo</p>
+          </div>
+          <button
+            className="btn"
+            disabled={isLoading}
+            onClick={refreshGlobalSettings}
+          >
+            Refresh
+          </button>
+        </div>
+
+        <div className="form-grid">
+          <label>
+            Timeout ms
+            <input
+              type="number"
+              min="1"
+              max="65535"
+              value={globalSettings.timeoutMs}
+              onChange={(event) =>
+                setGlobalSettings({
+                  ...globalSettings,
+                  timeoutMs: Number(event.target.value),
+                })
+              }
+            />
+          </label>
+        </div>
+
+        <div className="switches">
+          <label>
+            <input
+              type="checkbox"
+              checked={globalSettings.slowRelease}
+              onChange={(event) =>
+                setGlobalSettings({
+                  ...globalSettings,
+                  slowRelease: event.target.checked,
+                })
+              }
+            />
+            Slow release
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={globalSettings.persist}
+              onChange={(event) =>
+                setGlobalSettings({
+                  ...globalSettings,
+                  persist: event.target.checked,
+                })
+              }
+            />
+            Persist global settings
+          </label>
+        </div>
+
+        <div className="actions">
+          <button
+            className="btn primary"
+            disabled={isLoading}
+            onClick={saveTimeoutMs}
+          >
+            Save Timeout
+          </button>
+          <button
+            className="btn"
+            disabled={isLoading}
+            onClick={saveSlowRelease}
+          >
+            Save Slow Release
+          </button>
         </div>
       </section>
 
@@ -340,18 +497,6 @@ export function RPCTestSection() {
             />
           </label>
           <label>
-            Timeout ms
-            <input
-              type="number"
-              min="1"
-              max="65535"
-              value={draft.timeoutMs}
-              onChange={(event) =>
-                setDraft({ ...draft, timeoutMs: Number(event.target.value) })
-              }
-            />
-          </label>
-          <label>
             Layer mask
             <input
               value={draft.layerMask}
@@ -372,16 +517,6 @@ export function RPCTestSection() {
               }
             />
             Enabled
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={draft.slowRelease}
-              onChange={(event) =>
-                setDraft({ ...draft, slowRelease: event.target.checked })
-              }
-            />
-            Slow release
           </label>
           <label>
             <input

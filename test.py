@@ -113,20 +113,31 @@ class WestCommandsTests(unittest.TestCase):
         for artifact in artifacts_and_expected_build_params.keys():
             shutil.rmtree(self.BUILD_DIR / artifact, ignore_errors=True)
 
-        result = run_west(
-            [
-                "zmk-build",
-                "tests/zmk-config",
-                "-q",
-                "-P",
-                "1",
-                "-d",
-                str(self.BUILD_DIR),
-            ]
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
         for artifact, entries in artifacts_and_expected_build_params.items():
+            zephyr_cache_dir = self.BUILD_DIR / ".zephyr-cache" / artifact
+
+            result = run_west(
+                [
+                    "zmk-build",
+                    "tests/zmk-config",
+                    "-q",
+                    "-af",
+                    f"^{artifact}$",
+                    "-d",
+                    str(self.BUILD_DIR),
+                    "--cmake-args",
+                    (
+                        f"-DUSER_CACHE_DIR={zephyr_cache_dir} "
+                        f"-DZEPHYR_TOOLCHAIN_CAPABILITY_CACHE_DIR={zephyr_cache_dir / 'ToolchainCapabilityDatabase'}"
+                    ),
+                ]
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"{artifact} build failed\n{result.stdout}{result.stderr}",
+            )
+
             artifact_dir = self.BUILD_DIR / artifact / "zephyr"
             config_path = artifact_dir / ".config"
             device_tree_path = (

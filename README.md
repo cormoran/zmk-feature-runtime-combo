@@ -16,6 +16,7 @@ stored by numeric slot internally and can also have a display name for the Web U
 - Separate RPC methods for combo content and combo names to keep request payloads
   small.
 - Compact binary storage for combo bodies.
+- Global timeout and slow-release settings shared by all runtime combos.
 - Name and combo arrays stored through
   [zmk-feature-custom-settings](https://github.com/cormoran/zmk-feature-custom-settings).
 - React Web UI for listing and editing combo slots.
@@ -25,11 +26,13 @@ stored by numeric slot internally and can also have a display name for the Web U
 The combo body is saved as one packed byte-array custom setting per combo slot:
 
 ```text
-version, flags, position_count, timeout_ms, layer_mask, behavior_id, param1, param2, positions[]
+version, flags, position_count, layer_mask, behavior_id, param1, param2, positions[]
 ```
 
 `positions[]` are 16-bit values, and behavior parameters are 32-bit values. The
 name is saved separately as a string-array custom setting with the same index.
+Timeout and slow-release mode are saved as separate global custom settings and
+apply to every runtime combo.
 
 ## User Guide
 
@@ -75,10 +78,11 @@ name is saved separately as a string-array custom setting with the same index.
    - Name: display name only.
    - Positions: comma-separated key positions, such as `0, 1`.
    - Behavior ID, Param 1, Param 2: the same binding fields ZMK Studio uses.
-   - Timeout: maximum interval in milliseconds from the first key press.
    - Layer mask: `0` means all layers.
 
-Enable `Persist to settings` before saving if the combo should survive reboot.
+Set global timeout and slow-release mode in the Global Settings panel. Enable the
+corresponding persist checkbox before saving if the setting should survive
+reboot.
 
 ## Development
 

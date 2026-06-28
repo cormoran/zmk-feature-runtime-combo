@@ -20,10 +20,13 @@ export interface Combo {
   name: string;
   keyPositions: number[];
   behavior: BehaviorBinding | undefined;
-  timeoutMs: number;
   layerMask: number;
-  slowRelease: boolean;
   enabled: boolean;
+}
+
+export interface GlobalSettings {
+  timeoutMs: number;
+  slowRelease: boolean;
 }
 
 export interface ListCombosRequest {
@@ -37,9 +40,7 @@ export interface SetComboRequest {
   index: number;
   keyPositions: number[];
   behavior: BehaviorBinding | undefined;
-  timeoutMs: number;
   layerMask: number;
-  slowRelease: boolean;
   enabled: boolean;
   persist: boolean;
 }
@@ -55,12 +56,28 @@ export interface DeleteComboRequest {
   persist: boolean;
 }
 
+export interface GetGlobalSettingsRequest {
+}
+
+export interface SetTimeoutMsRequest {
+  timeoutMs: number;
+  persist: boolean;
+}
+
+export interface SetSlowReleaseRequest {
+  slowRelease: boolean;
+  persist: boolean;
+}
+
 export interface Request {
   listCombos?: ListCombosRequest | undefined;
   getCombo?: GetComboRequest | undefined;
   setCombo?: SetComboRequest | undefined;
   setComboName?: SetComboNameRequest | undefined;
   deleteCombo?: DeleteComboRequest | undefined;
+  getGlobalSettings?: GetGlobalSettingsRequest | undefined;
+  setTimeoutMs?: SetTimeoutMsRequest | undefined;
+  setSlowRelease?: SetSlowReleaseRequest | undefined;
 }
 
 export interface ListCombosResponse {
@@ -69,6 +86,10 @@ export interface ListCombosResponse {
 
 export interface GetComboResponse {
   combo: Combo | undefined;
+}
+
+export interface GetGlobalSettingsResponse {
+  settings: GlobalSettings | undefined;
 }
 
 export interface StatusResponse {
@@ -85,6 +106,7 @@ export interface Response {
   listCombos?: ListCombosResponse | undefined;
   getCombo?: GetComboResponse | undefined;
   status?: StatusResponse | undefined;
+  getGlobalSettings?: GetGlobalSettingsResponse | undefined;
 }
 
 function createBaseBehaviorBinding(): BehaviorBinding {
@@ -158,16 +180,7 @@ export const BehaviorBinding: MessageFns<BehaviorBinding> = {
 };
 
 function createBaseCombo(): Combo {
-  return {
-    index: 0,
-    name: "",
-    keyPositions: [],
-    behavior: undefined,
-    timeoutMs: 0,
-    layerMask: 0,
-    slowRelease: false,
-    enabled: false,
-  };
+  return { index: 0, name: "", keyPositions: [], behavior: undefined, layerMask: 0, enabled: false };
 }
 
 export const Combo: MessageFns<Combo> = {
@@ -186,14 +199,8 @@ export const Combo: MessageFns<Combo> = {
     if (message.behavior !== undefined) {
       BehaviorBinding.encode(message.behavior, writer.uint32(34).fork()).join();
     }
-    if (message.timeoutMs !== 0) {
-      writer.uint32(40).uint32(message.timeoutMs);
-    }
     if (message.layerMask !== 0) {
       writer.uint32(48).uint32(message.layerMask);
-    }
-    if (message.slowRelease !== false) {
-      writer.uint32(56).bool(message.slowRelease);
     }
     if (message.enabled !== false) {
       writer.uint32(64).bool(message.enabled);
@@ -250,28 +257,12 @@ export const Combo: MessageFns<Combo> = {
           message.behavior = BehaviorBinding.decode(reader, reader.uint32());
           continue;
         }
-        case 5: {
-          if (tag !== 40) {
-            break;
-          }
-
-          message.timeoutMs = reader.uint32();
-          continue;
-        }
         case 6: {
           if (tag !== 48) {
             break;
           }
 
           message.layerMask = reader.uint32();
-          continue;
-        }
-        case 7: {
-          if (tag !== 56) {
-            break;
-          }
-
-          message.slowRelease = reader.bool();
           continue;
         }
         case 8: {
@@ -302,10 +293,66 @@ export const Combo: MessageFns<Combo> = {
     message.behavior = (object.behavior !== undefined && object.behavior !== null)
       ? BehaviorBinding.fromPartial(object.behavior)
       : undefined;
-    message.timeoutMs = object.timeoutMs ?? 0;
     message.layerMask = object.layerMask ?? 0;
-    message.slowRelease = object.slowRelease ?? false;
     message.enabled = object.enabled ?? false;
+    return message;
+  },
+};
+
+function createBaseGlobalSettings(): GlobalSettings {
+  return { timeoutMs: 0, slowRelease: false };
+}
+
+export const GlobalSettings: MessageFns<GlobalSettings> = {
+  encode(message: GlobalSettings, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.timeoutMs !== 0) {
+      writer.uint32(8).uint32(message.timeoutMs);
+    }
+    if (message.slowRelease !== false) {
+      writer.uint32(16).bool(message.slowRelease);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GlobalSettings {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGlobalSettings();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.timeoutMs = reader.uint32();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.slowRelease = reader.bool();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<GlobalSettings>): GlobalSettings {
+    return GlobalSettings.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<GlobalSettings>): GlobalSettings {
+    const message = createBaseGlobalSettings();
+    message.timeoutMs = object.timeoutMs ?? 0;
+    message.slowRelease = object.slowRelease ?? false;
     return message;
   },
 };
@@ -391,16 +438,7 @@ export const GetComboRequest: MessageFns<GetComboRequest> = {
 };
 
 function createBaseSetComboRequest(): SetComboRequest {
-  return {
-    index: 0,
-    keyPositions: [],
-    behavior: undefined,
-    timeoutMs: 0,
-    layerMask: 0,
-    slowRelease: false,
-    enabled: false,
-    persist: false,
-  };
+  return { index: 0, keyPositions: [], behavior: undefined, layerMask: 0, enabled: false, persist: false };
 }
 
 export const SetComboRequest: MessageFns<SetComboRequest> = {
@@ -416,14 +454,8 @@ export const SetComboRequest: MessageFns<SetComboRequest> = {
     if (message.behavior !== undefined) {
       BehaviorBinding.encode(message.behavior, writer.uint32(26).fork()).join();
     }
-    if (message.timeoutMs !== 0) {
-      writer.uint32(32).uint32(message.timeoutMs);
-    }
     if (message.layerMask !== 0) {
       writer.uint32(40).uint32(message.layerMask);
-    }
-    if (message.slowRelease !== false) {
-      writer.uint32(48).bool(message.slowRelease);
     }
     if (message.enabled !== false) {
       writer.uint32(56).bool(message.enabled);
@@ -475,28 +507,12 @@ export const SetComboRequest: MessageFns<SetComboRequest> = {
           message.behavior = BehaviorBinding.decode(reader, reader.uint32());
           continue;
         }
-        case 4: {
-          if (tag !== 32) {
-            break;
-          }
-
-          message.timeoutMs = reader.uint32();
-          continue;
-        }
         case 5: {
           if (tag !== 40) {
             break;
           }
 
           message.layerMask = reader.uint32();
-          continue;
-        }
-        case 6: {
-          if (tag !== 48) {
-            break;
-          }
-
-          message.slowRelease = reader.bool();
           continue;
         }
         case 7: {
@@ -534,9 +550,7 @@ export const SetComboRequest: MessageFns<SetComboRequest> = {
     message.behavior = (object.behavior !== undefined && object.behavior !== null)
       ? BehaviorBinding.fromPartial(object.behavior)
       : undefined;
-    message.timeoutMs = object.timeoutMs ?? 0;
     message.layerMask = object.layerMask ?? 0;
-    message.slowRelease = object.slowRelease ?? false;
     message.enabled = object.enabled ?? false;
     message.persist = object.persist ?? false;
     return message;
@@ -671,6 +685,156 @@ export const DeleteComboRequest: MessageFns<DeleteComboRequest> = {
   },
 };
 
+function createBaseGetGlobalSettingsRequest(): GetGlobalSettingsRequest {
+  return {};
+}
+
+export const GetGlobalSettingsRequest: MessageFns<GetGlobalSettingsRequest> = {
+  encode(_: GetGlobalSettingsRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GetGlobalSettingsRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGetGlobalSettingsRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<GetGlobalSettingsRequest>): GetGlobalSettingsRequest {
+    return GetGlobalSettingsRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<GetGlobalSettingsRequest>): GetGlobalSettingsRequest {
+    const message = createBaseGetGlobalSettingsRequest();
+    return message;
+  },
+};
+
+function createBaseSetTimeoutMsRequest(): SetTimeoutMsRequest {
+  return { timeoutMs: 0, persist: false };
+}
+
+export const SetTimeoutMsRequest: MessageFns<SetTimeoutMsRequest> = {
+  encode(message: SetTimeoutMsRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.timeoutMs !== 0) {
+      writer.uint32(8).uint32(message.timeoutMs);
+    }
+    if (message.persist !== false) {
+      writer.uint32(16).bool(message.persist);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): SetTimeoutMsRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseSetTimeoutMsRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.timeoutMs = reader.uint32();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.persist = reader.bool();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<SetTimeoutMsRequest>): SetTimeoutMsRequest {
+    return SetTimeoutMsRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<SetTimeoutMsRequest>): SetTimeoutMsRequest {
+    const message = createBaseSetTimeoutMsRequest();
+    message.timeoutMs = object.timeoutMs ?? 0;
+    message.persist = object.persist ?? false;
+    return message;
+  },
+};
+
+function createBaseSetSlowReleaseRequest(): SetSlowReleaseRequest {
+  return { slowRelease: false, persist: false };
+}
+
+export const SetSlowReleaseRequest: MessageFns<SetSlowReleaseRequest> = {
+  encode(message: SetSlowReleaseRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.slowRelease !== false) {
+      writer.uint32(8).bool(message.slowRelease);
+    }
+    if (message.persist !== false) {
+      writer.uint32(16).bool(message.persist);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): SetSlowReleaseRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseSetSlowReleaseRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.slowRelease = reader.bool();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.persist = reader.bool();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<SetSlowReleaseRequest>): SetSlowReleaseRequest {
+    return SetSlowReleaseRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<SetSlowReleaseRequest>): SetSlowReleaseRequest {
+    const message = createBaseSetSlowReleaseRequest();
+    message.slowRelease = object.slowRelease ?? false;
+    message.persist = object.persist ?? false;
+    return message;
+  },
+};
+
 function createBaseRequest(): Request {
   return {
     listCombos: undefined,
@@ -678,6 +842,9 @@ function createBaseRequest(): Request {
     setCombo: undefined,
     setComboName: undefined,
     deleteCombo: undefined,
+    getGlobalSettings: undefined,
+    setTimeoutMs: undefined,
+    setSlowRelease: undefined,
   };
 }
 
@@ -697,6 +864,15 @@ export const Request: MessageFns<Request> = {
     }
     if (message.deleteCombo !== undefined) {
       DeleteComboRequest.encode(message.deleteCombo, writer.uint32(42).fork()).join();
+    }
+    if (message.getGlobalSettings !== undefined) {
+      GetGlobalSettingsRequest.encode(message.getGlobalSettings, writer.uint32(50).fork()).join();
+    }
+    if (message.setTimeoutMs !== undefined) {
+      SetTimeoutMsRequest.encode(message.setTimeoutMs, writer.uint32(58).fork()).join();
+    }
+    if (message.setSlowRelease !== undefined) {
+      SetSlowReleaseRequest.encode(message.setSlowRelease, writer.uint32(66).fork()).join();
     }
     return writer;
   },
@@ -748,6 +924,30 @@ export const Request: MessageFns<Request> = {
           message.deleteCombo = DeleteComboRequest.decode(reader, reader.uint32());
           continue;
         }
+        case 6: {
+          if (tag !== 50) {
+            break;
+          }
+
+          message.getGlobalSettings = GetGlobalSettingsRequest.decode(reader, reader.uint32());
+          continue;
+        }
+        case 7: {
+          if (tag !== 58) {
+            break;
+          }
+
+          message.setTimeoutMs = SetTimeoutMsRequest.decode(reader, reader.uint32());
+          continue;
+        }
+        case 8: {
+          if (tag !== 66) {
+            break;
+          }
+
+          message.setSlowRelease = SetSlowReleaseRequest.decode(reader, reader.uint32());
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -776,6 +976,15 @@ export const Request: MessageFns<Request> = {
       : undefined;
     message.deleteCombo = (object.deleteCombo !== undefined && object.deleteCombo !== null)
       ? DeleteComboRequest.fromPartial(object.deleteCombo)
+      : undefined;
+    message.getGlobalSettings = (object.getGlobalSettings !== undefined && object.getGlobalSettings !== null)
+      ? GetGlobalSettingsRequest.fromPartial(object.getGlobalSettings)
+      : undefined;
+    message.setTimeoutMs = (object.setTimeoutMs !== undefined && object.setTimeoutMs !== null)
+      ? SetTimeoutMsRequest.fromPartial(object.setTimeoutMs)
+      : undefined;
+    message.setSlowRelease = (object.setSlowRelease !== undefined && object.setSlowRelease !== null)
+      ? SetSlowReleaseRequest.fromPartial(object.setSlowRelease)
       : undefined;
     return message;
   },
@@ -869,6 +1078,54 @@ export const GetComboResponse: MessageFns<GetComboResponse> = {
   fromPartial(object: DeepPartial<GetComboResponse>): GetComboResponse {
     const message = createBaseGetComboResponse();
     message.combo = (object.combo !== undefined && object.combo !== null) ? Combo.fromPartial(object.combo) : undefined;
+    return message;
+  },
+};
+
+function createBaseGetGlobalSettingsResponse(): GetGlobalSettingsResponse {
+  return { settings: undefined };
+}
+
+export const GetGlobalSettingsResponse: MessageFns<GetGlobalSettingsResponse> = {
+  encode(message: GetGlobalSettingsResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.settings !== undefined) {
+      GlobalSettings.encode(message.settings, writer.uint32(10).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GetGlobalSettingsResponse {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGetGlobalSettingsResponse();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.settings = GlobalSettings.decode(reader, reader.uint32());
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<GetGlobalSettingsResponse>): GetGlobalSettingsResponse {
+    return GetGlobalSettingsResponse.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<GetGlobalSettingsResponse>): GetGlobalSettingsResponse {
+    const message = createBaseGetGlobalSettingsResponse();
+    message.settings = (object.settings !== undefined && object.settings !== null)
+      ? GlobalSettings.fromPartial(object.settings)
+      : undefined;
     return message;
   },
 };
@@ -978,7 +1235,13 @@ export const ErrorResponse: MessageFns<ErrorResponse> = {
 };
 
 function createBaseResponse(): Response {
-  return { error: undefined, listCombos: undefined, getCombo: undefined, status: undefined };
+  return {
+    error: undefined,
+    listCombos: undefined,
+    getCombo: undefined,
+    status: undefined,
+    getGlobalSettings: undefined,
+  };
 }
 
 export const Response: MessageFns<Response> = {
@@ -994,6 +1257,9 @@ export const Response: MessageFns<Response> = {
     }
     if (message.status !== undefined) {
       StatusResponse.encode(message.status, writer.uint32(34).fork()).join();
+    }
+    if (message.getGlobalSettings !== undefined) {
+      GetGlobalSettingsResponse.encode(message.getGlobalSettings, writer.uint32(42).fork()).join();
     }
     return writer;
   },
@@ -1037,6 +1303,14 @@ export const Response: MessageFns<Response> = {
           message.status = StatusResponse.decode(reader, reader.uint32());
           continue;
         }
+        case 5: {
+          if (tag !== 42) {
+            break;
+          }
+
+          message.getGlobalSettings = GetGlobalSettingsResponse.decode(reader, reader.uint32());
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1062,6 +1336,9 @@ export const Response: MessageFns<Response> = {
       : undefined;
     message.status = (object.status !== undefined && object.status !== null)
       ? StatusResponse.fromPartial(object.status)
+      : undefined;
+    message.getGlobalSettings = (object.getGlobalSettings !== undefined && object.getGlobalSettings !== null)
+      ? GetGlobalSettingsResponse.fromPartial(object.getGlobalSettings)
       : undefined;
     return message;
   },

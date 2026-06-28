@@ -56,8 +56,6 @@ static int fill_combo_message(uint32_t index, cormoran_runtime_combo_Combo *mess
     *message = (cormoran_runtime_combo_Combo)cormoran_runtime_combo_Combo_init_zero;
     message->index = index;
     message->enabled = combo.enabled;
-    message->slow_release = combo.slow_release;
-    message->timeout_ms = combo.timeout_ms;
     message->layer_mask = combo.layer_mask;
     message->key_positions_count = combo.key_position_len;
     for (uint8_t i = 0; i < combo.key_position_len; i++) {
@@ -116,7 +114,7 @@ static int request_to_combo(const cormoran_runtime_combo_SetComboRequest *req,
                             struct zmk_runtime_combo_config *combo) {
     if (req->index >= zmk_runtime_combo_max_count() || req->key_positions_count < 2 ||
         req->key_positions_count > CONFIG_ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO ||
-        !req->has_behavior || req->behavior.behavior_id > UINT16_MAX || req->timeout_ms > UINT16_MAX) {
+        !req->has_behavior || req->behavior.behavior_id > UINT16_MAX) {
         return -EINVAL;
     }
 
@@ -128,10 +126,7 @@ static int request_to_combo(const cormoran_runtime_combo_SetComboRequest *req,
 
     *combo = (struct zmk_runtime_combo_config){
         .enabled = req->enabled,
-        .slow_release = req->slow_release,
         .key_position_len = req->key_positions_count,
-        .timeout_ms = req->timeout_ms == 0 ? CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_TIMEOUT_MS
-                                           : req->timeout_ms,
         .layer_mask = req->layer_mask,
         .behavior =
             {
@@ -147,6 +142,24 @@ static int request_to_combo(const cormoran_runtime_combo_SetComboRequest *req,
         }
         combo->key_positions[i] = req->key_positions[i];
     }
+    return 0;
+}
+
+static int handle_get_global_settings(cormoran_runtime_combo_Response *resp) {
+    struct zmk_runtime_combo_global_settings settings;
+    int ret = zmk_runtime_combo_read_global_settings(&settings);
+    if (ret < 0) {
+        return ret;
+    }
+
+    cormoran_runtime_combo_GetGlobalSettingsResponse result =
+        cormoran_runtime_combo_GetGlobalSettingsResponse_init_zero;
+    result.has_settings = true;
+    result.settings.timeout_ms = settings.timeout_ms;
+    result.settings.slow_release = settings.slow_release;
+
+    resp->which_response_type = cormoran_runtime_combo_Response_get_global_settings_tag;
+    resp->response_type.get_global_settings = result;
     return 0;
 }
 
@@ -197,6 +210,32 @@ static int handle_delete_combo(const cormoran_runtime_combo_DeleteComboRequest *
     return 0;
 }
 
+static int handle_set_timeout_ms(const cormoran_runtime_combo_SetTimeoutMsRequest *req,
+                                 cormoran_runtime_combo_Response *resp) {
+    if (req->timeout_ms == 0 || req->timeout_ms > UINT16_MAX) {
+        return -EINVAL;
+    }
+
+    int ret = zmk_runtime_combo_write_timeout_ms((uint16_t)req->timeout_ms, req->persist);
+    if (ret < 0) {
+        return ret;
+    }
+
+    set_status(resp, "Runtime combo timeout written");
+    return 0;
+}
+
+static int handle_set_slow_release(const cormoran_runtime_combo_SetSlowReleaseRequest *req,
+                                   cormoran_runtime_combo_Response *resp) {
+    int ret = zmk_runtime_combo_write_slow_release(req->slow_release, req->persist);
+    if (ret < 0) {
+        return ret;
+    }
+
+    set_status(resp, "Runtime combo slow release written");
+    return 0;
+}
+
 static bool runtime_combo_rpc_handle_request(const zmk_custom_CallRequest *raw_request,
                                              pb_callback_t *encode_response) {
     cormoran_runtime_combo_Response *resp =
@@ -228,6 +267,15 @@ static bool runtime_combo_rpc_handle_request(const zmk_custom_CallRequest *raw_r
         break;
     case cormoran_runtime_combo_Request_delete_combo_tag:
         ret = handle_delete_combo(&req.request_type.delete_combo, resp);
+        break;
+    case cormoran_runtime_combo_Request_get_global_settings_tag:
+        ret = handle_get_global_settings(resp);
+        break;
+    case cormoran_runtime_combo_Request_set_timeout_ms_tag:
+        ret = handle_set_timeout_ms(&req.request_type.set_timeout_ms, resp);
+        break;
+    case cormoran_runtime_combo_Request_set_slow_release_tag:
+        ret = handle_set_slow_release(&req.request_type.set_slow_release, resp);
         break;
     default:
         ret = -ENOTSUP;

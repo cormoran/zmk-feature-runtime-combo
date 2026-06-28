@@ -13,10 +13,13 @@ message Combo {
     string name = 2;
     repeated uint32 key_positions = 3;
     BehaviorBinding behavior = 4;
-    uint32 timeout_ms = 5;
     uint32 layer_mask = 6;
-    bool slow_release = 7;
     bool enabled = 8;
+}
+
+message GlobalSettings {
+    uint32 timeout_ms = 1;
+    bool slow_release = 2;
 }
 
 message ListCombosRequest {}
@@ -27,9 +30,7 @@ message SetComboRequest {
     uint32 index = 1;
     repeated uint32 key_positions = 2;
     BehaviorBinding behavior = 3;
-    uint32 timeout_ms = 4;
     uint32 layer_mask = 5;
-    bool slow_release = 6;
     bool enabled = 7;
     bool persist = 8;
 }
@@ -45,6 +46,18 @@ message DeleteComboRequest {
     bool persist = 2;
 }
 
+message GetGlobalSettingsRequest {}
+
+message SetTimeoutMsRequest {
+    uint32 timeout_ms = 1;
+    bool persist = 2;
+}
+
+message SetSlowReleaseRequest {
+    bool slow_release = 1;
+    bool persist = 2;
+}
+
 message Request {
     oneof request_type {
         ListCombosRequest list_combos = 1;
@@ -52,12 +65,17 @@ message Request {
         SetComboRequest set_combo = 3;
         SetComboNameRequest set_combo_name = 4;
         DeleteComboRequest delete_combo = 5;
+        GetGlobalSettingsRequest get_global_settings = 6;
+        SetTimeoutMsRequest set_timeout_ms = 7;
+        SetSlowReleaseRequest set_slow_release = 8;
     }
 }
 
 message ListCombosResponse { repeated Combo combos = 1; }
 
 message GetComboResponse { Combo combo = 1; }
+
+message GetGlobalSettingsResponse { GlobalSettings settings = 1; }
 
 message StatusResponse {
     uint32 affected_count = 1;
@@ -72,5 +90,6 @@ message Response {
         ListCombosResponse list_combos = 2;
         GetComboResponse get_combo = 3;
         StatusResponse status = 4;
+        GetGlobalSettingsResponse get_global_settings = 5;
     }
 }

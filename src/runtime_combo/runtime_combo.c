@@ -27,11 +27,10 @@
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
-#define RUNTIME_COMBO_STORAGE_VERSION 1
+#define RUNTIME_COMBO_STORAGE_VERSION 2
 #define RUNTIME_COMBO_FLAG_ENABLED BIT(0)
-#define RUNTIME_COMBO_FLAG_SLOW_RELEASE BIT(1)
-#define RUNTIME_COMBO_PACKED_HEADER_SIZE 20
-#define RUNTIME_COMBO_PACKED_MAX_SIZE                                                               \
+#define RUNTIME_COMBO_PACKED_HEADER_SIZE 18
+#define RUNTIME_COMBO_PACKED_MAX_SIZE                                                              \
     (RUNTIME_COMBO_PACKED_HEADER_SIZE +                                                            \
      (CONFIG_ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO * sizeof(uint16_t)))
 
@@ -46,7 +45,7 @@ BUILD_ASSERT(RUNTIME_COMBO_PACKED_MAX_SIZE <= CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_M
         ZMK_CUSTOM_SETTING_NO_CONSTRAINT};                                                         \
     STRUCT_SECTION_ITERABLE(zmk_custom_setting, _name) = {                                         \
         .custom_subsystem_id = ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,                                     \
-        .key = _key "/" ZMK_CUSTOM_SETTINGS_STRINGIFY(_index),                                    \
+        .key = _key "/" ZMK_CUSTOM_SETTINGS_STRINGIFY(_index),                                     \
         .array_key = _key,                                                                         \
         .array_index = (_index),                                                                   \
         .array_max_size = CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS,                                     \
@@ -64,16 +63,53 @@ BUILD_ASSERT(RUNTIME_COMBO_PACKED_MAX_SIZE <= CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_M
 
 #define RUNTIME_COMBO_DEFINE_COMBO_SETTING(n, _)                                                   \
     RUNTIME_COMBO_ARRAY_ELEMENT_DEFINE(runtime_combo_##n, ZMK_RUNTIME_COMBO_COMBOS_KEY, n,         \
-                                       ZMK_CUSTOM_SETTING_VALUE_TYPE_BYTES,                         \
+                                       ZMK_CUSTOM_SETTING_VALUE_TYPE_BYTES,                        \
                                        RUNTIME_COMBO_EMPTY_BYTES);
 
 #define RUNTIME_COMBO_DEFINE_NAME_SETTING(n, _)                                                    \
     RUNTIME_COMBO_ARRAY_ELEMENT_DEFINE(runtime_combo_name_##n, ZMK_RUNTIME_COMBO_NAMES_KEY, n,     \
-                                       ZMK_CUSTOM_SETTING_VALUE_TYPE_STRING,                        \
+                                       ZMK_CUSTOM_SETTING_VALUE_TYPE_STRING,                       \
                                        ZMK_CUSTOM_SETTING_VALUE_STRING(""));
 
 LISTIFY(CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS, RUNTIME_COMBO_DEFINE_COMBO_SETTING, (), 0)
 LISTIFY(CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS, RUNTIME_COMBO_DEFINE_NAME_SETTING, (), 0)
+
+static const struct zmk_custom_setting_constraint runtime_combo_timeout_ms_constraints[] = {
+    {.type = ZMK_CUSTOM_SETTING_CONSTRAINT_RANGE,
+     .range = {.min = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32, .int32_value = 1},
+               .max = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32, .int32_value = 65535}}},
+};
+
+STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_timeout_ms) = {
+    .custom_subsystem_id = ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+    .key = ZMK_RUNTIME_COMBO_TIMEOUT_MS_KEY,
+    .array_index = ZMK_CUSTOM_SETTING_ARRAY_NONE,
+    .value_type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
+    .confidentiality = ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC,
+    .read_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+    .write_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+    .constraints = runtime_combo_timeout_ms_constraints,
+    .constraints_count = ARRAY_SIZE(runtime_combo_timeout_ms_constraints),
+    .default_value = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
+                      .int32_value = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_TIMEOUT_MS},
+};
+
+static const struct zmk_custom_setting_constraint runtime_combo_slow_release_constraints[] = {
+    {.type = ZMK_CUSTOM_SETTING_CONSTRAINT_NONE},
+};
+
+STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_slow_release) = {
+    .custom_subsystem_id = ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+    .key = ZMK_RUNTIME_COMBO_SLOW_RELEASE_KEY,
+    .array_index = ZMK_CUSTOM_SETTING_ARRAY_NONE,
+    .value_type = ZMK_CUSTOM_SETTING_VALUE_TYPE_BOOL,
+    .confidentiality = ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC,
+    .read_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+    .write_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+    .constraints = runtime_combo_slow_release_constraints,
+    .constraints_count = ARRAY_SIZE(runtime_combo_slow_release_constraints),
+    .default_value = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_BOOL, .bool_value = false},
+};
 
 struct runtime_combo_active {
     uint16_t combo_idx;
@@ -138,18 +174,16 @@ static int packed_to_combo(const struct zmk_custom_setting_value *value,
 
     *combo = (struct zmk_runtime_combo_config){
         .enabled = (value->bytes_value[1] & RUNTIME_COMBO_FLAG_ENABLED) != 0,
-        .slow_release = (value->bytes_value[1] & RUNTIME_COMBO_FLAG_SLOW_RELEASE) != 0,
         .key_position_len = key_position_len,
-        .timeout_ms = get_u16(&value->bytes_value[4]),
-        .layer_mask = get_u32(&value->bytes_value[6]),
+        .layer_mask = get_u32(&value->bytes_value[4]),
         .behavior =
             {
-                .param1 = get_u32(&value->bytes_value[12]),
-                .param2 = get_u32(&value->bytes_value[16]),
+                .param1 = get_u32(&value->bytes_value[10]),
+                .param2 = get_u32(&value->bytes_value[14]),
             },
     };
 
-    zmk_behavior_local_id_t behavior_id = get_u16(&value->bytes_value[10]);
+    zmk_behavior_local_id_t behavior_id = get_u16(&value->bytes_value[8]);
     const char *behavior_name = zmk_behavior_find_behavior_name_from_local_id(behavior_id);
     if (!behavior_name) {
         return -ENODEV;
@@ -172,10 +206,6 @@ static int combo_to_packed(const struct zmk_runtime_combo_config *combo,
         combo->key_position_len > CONFIG_ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO) {
         return -EINVAL;
     }
-    if (combo->timeout_ms == 0) {
-        return -EINVAL;
-    }
-
     zmk_behavior_local_id_t behavior_id = zmk_behavior_get_local_id(combo->behavior.behavior_dev);
     if (behavior_id == UINT16_MAX) {
         return -ENODEV;
@@ -196,15 +226,13 @@ static int combo_to_packed(const struct zmk_runtime_combo_config *combo,
         .size = RUNTIME_COMBO_PACKED_HEADER_SIZE + combo->key_position_len * sizeof(uint16_t),
     };
     value->bytes_value[0] = RUNTIME_COMBO_STORAGE_VERSION;
-    value->bytes_value[1] = (combo->enabled ? RUNTIME_COMBO_FLAG_ENABLED : 0) |
-                            (combo->slow_release ? RUNTIME_COMBO_FLAG_SLOW_RELEASE : 0);
+    value->bytes_value[1] = combo->enabled ? RUNTIME_COMBO_FLAG_ENABLED : 0;
     value->bytes_value[2] = combo->key_position_len;
     value->bytes_value[3] = 0;
-    put_u16(&value->bytes_value[4], combo->timeout_ms);
-    put_u32(&value->bytes_value[6], combo->layer_mask);
-    put_u16(&value->bytes_value[10], behavior_id);
-    put_u32(&value->bytes_value[12], combo->behavior.param1);
-    put_u32(&value->bytes_value[16], combo->behavior.param2);
+    put_u32(&value->bytes_value[4], combo->layer_mask);
+    put_u16(&value->bytes_value[8], behavior_id);
+    put_u32(&value->bytes_value[10], combo->behavior.param1);
+    put_u32(&value->bytes_value[14], combo->behavior.param2);
 
     for (uint8_t i = 0; i < combo->key_position_len; i++) {
         put_u16(&value->bytes_value[RUNTIME_COMBO_PACKED_HEADER_SIZE + i * sizeof(uint16_t)],
@@ -219,8 +247,8 @@ int zmk_runtime_combo_read(uint32_t index, struct zmk_runtime_combo_config *comb
     }
 
     struct zmk_custom_setting_value value;
-    int ret = zmk_custom_setting_read_array_by_key(
-        ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, ZMK_RUNTIME_COMBO_COMBOS_KEY, index, &value);
+    int ret = zmk_custom_setting_read_array_by_key(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+                                                   ZMK_RUNTIME_COMBO_COMBOS_KEY, index, &value);
     if (ret < 0) {
         return ret;
     }
@@ -233,8 +261,8 @@ int zmk_runtime_combo_read_name(uint32_t index, char *name, size_t name_size) {
     }
 
     struct zmk_custom_setting_value value;
-    int ret = zmk_custom_setting_read_array_by_key(
-        ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, ZMK_RUNTIME_COMBO_NAMES_KEY, index, &value);
+    int ret = zmk_custom_setting_read_array_by_key(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+                                                   ZMK_RUNTIME_COMBO_NAMES_KEY, index, &value);
     if (ret < 0) {
         name[0] = '\0';
         return ret;
@@ -244,6 +272,39 @@ int zmk_runtime_combo_read_name(uint32_t index, char *name, size_t name_size) {
     }
     strncpy(name, value.string_value, name_size - 1);
     name[name_size - 1] = '\0';
+    return 0;
+}
+
+int zmk_runtime_combo_read_global_settings(struct zmk_runtime_combo_global_settings *settings) {
+    if (!settings) {
+        return -EINVAL;
+    }
+
+    struct zmk_custom_setting_value timeout_value;
+    int ret = zmk_custom_setting_read_by_key(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+                                             ZMK_RUNTIME_COMBO_TIMEOUT_MS_KEY, &timeout_value);
+    if (ret < 0) {
+        return ret;
+    }
+    if (timeout_value.type != ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32 ||
+        timeout_value.int32_value < 1 || timeout_value.int32_value > UINT16_MAX) {
+        return -EINVAL;
+    }
+
+    struct zmk_custom_setting_value slow_release_value;
+    ret = zmk_custom_setting_read_by_key(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+                                         ZMK_RUNTIME_COMBO_SLOW_RELEASE_KEY, &slow_release_value);
+    if (ret < 0) {
+        return ret;
+    }
+    if (slow_release_value.type != ZMK_CUSTOM_SETTING_VALUE_TYPE_BOOL) {
+        return -EINVAL;
+    }
+
+    *settings = (struct zmk_runtime_combo_global_settings){
+        .timeout_ms = timeout_value.int32_value,
+        .slow_release = slow_release_value.bool_value,
+    };
     return 0;
 }
 
@@ -279,9 +340,9 @@ int zmk_runtime_combo_write(uint32_t index, const struct zmk_runtime_combo_confi
     }
 
     uint32_t array_size = MAX(zmk_custom_setting_array_size(setting), index + 1);
-    ret = zmk_custom_setting_write_array_element(
-        setting, &value, array_size,
-        persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
+    ret = zmk_custom_setting_write_array_element(setting, &value, array_size,
+                                                 persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
+                                                         : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
     if (ret < 0) {
         return ret;
     }
@@ -305,8 +366,26 @@ int zmk_runtime_combo_write_name(uint32_t index, const char *name, bool persist)
     value.size = strlen(value.string_value);
 
     uint32_t array_size = MAX(zmk_custom_setting_array_size(setting), index + 1);
-    return zmk_custom_setting_write_array_element(
-        setting, &value, array_size,
+    return zmk_custom_setting_write_array_element(setting, &value, array_size,
+                                                  persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
+                                                          : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
+}
+
+int zmk_runtime_combo_write_timeout_ms(uint16_t timeout_ms, bool persist) {
+    if (timeout_ms == 0) {
+        return -EINVAL;
+    }
+
+    struct zmk_custom_setting_value value = ZMK_CUSTOM_SETTING_VALUE_INT32(timeout_ms);
+    return zmk_custom_setting_write_by_key(
+        ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, ZMK_RUNTIME_COMBO_TIMEOUT_MS_KEY, &value,
+        persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
+}
+
+int zmk_runtime_combo_write_slow_release(bool slow_release, bool persist) {
+    struct zmk_custom_setting_value value = ZMK_CUSTOM_SETTING_VALUE_BOOL(slow_release);
+    return zmk_custom_setting_write_by_key(
+        ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, ZMK_RUNTIME_COMBO_SLOW_RELEASE_KEY, &value,
         persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
 }
 
@@ -320,7 +399,8 @@ int zmk_runtime_combo_delete(uint32_t index, bool persist) {
     return zmk_runtime_combo_write(index, &combo, persist);
 }
 
-static bool combo_contains_position(const struct zmk_runtime_combo_config *combo, int32_t position) {
+static bool combo_contains_position(const struct zmk_runtime_combo_config *combo,
+                                    int32_t position) {
     for (uint8_t i = 0; i < combo->key_position_len; i++) {
         if (combo->key_positions[i] == position) {
             return true;
@@ -333,11 +413,23 @@ static bool combo_active_on_layer(const struct zmk_runtime_combo_config *combo, 
     return combo->layer_mask == 0 || (combo->layer_mask & BIT(layer)) != 0;
 }
 
+static struct zmk_runtime_combo_global_settings current_global_settings(void) {
+    struct zmk_runtime_combo_global_settings settings = {
+        .timeout_ms = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_TIMEOUT_MS,
+        .slow_release = false,
+    };
+    if (zmk_runtime_combo_read_global_settings(&settings) < 0) {
+        LOG_WRN("Using default runtime combo global settings");
+    }
+    return settings;
+}
+
 static bool combo_matches_pending(const struct zmk_runtime_combo_config *combo, int64_t timestamp) {
     if (!combo->enabled || pending_count == 0) {
         return false;
     }
-    if (pending_keys[0].data.timestamp + combo->timeout_ms <= timestamp) {
+    uint16_t timeout_ms = current_global_settings().timeout_ms;
+    if (pending_keys[0].data.timestamp + timeout_ms <= timestamp) {
         return false;
     }
     for (uint8_t i = 0; i < pending_count; i++) {
@@ -372,7 +464,8 @@ static int count_candidates_for_position(int32_t position, int64_t timestamp) {
             continue;
         }
         if (!combo_contains_position(&combo, position) ||
-            !combo_active_on_layer(&combo, highest_active_layer) || is_quick_tap(&combo, timestamp)) {
+            !combo_active_on_layer(&combo, highest_active_layer) ||
+            is_quick_tap(&combo, timestamp)) {
             continue;
         }
         if (pending_count == 0 || combo_matches_pending(&combo, timestamp)) {
@@ -409,13 +502,14 @@ static void update_timeout_task(void) {
     }
 
     int64_t timeout_at = LLONG_MAX;
+    uint16_t timeout_ms = current_global_settings().timeout_ms;
     uint32_t combo_count = zmk_runtime_combo_count();
     for (uint32_t i = 0; i < combo_count; i++) {
         struct zmk_runtime_combo_config combo;
         if (read_enabled_combo(i, &combo) < 0 || !combo_matches_pending(&combo, k_uptime_get())) {
             continue;
         }
-        timeout_at = MIN(timeout_at, pending_keys[0].data.timestamp + combo.timeout_ms);
+        timeout_at = MIN(timeout_at, pending_keys[0].data.timestamp + timeout_ms);
     }
 
     if (timeout_at == LLONG_MAX) {
@@ -555,7 +649,8 @@ static bool release_combo_key(int32_t position, int64_t timestamp) {
         }
 
         active->key_positions_pressed_count--;
-        if ((combo.slow_release && all_keys_released) || (!combo.slow_release && all_keys_pressed)) {
+        bool slow_release = current_global_settings().slow_release;
+        if ((slow_release && all_keys_released) || (!slow_release && all_keys_pressed)) {
             release_combo_behavior(active->combo_idx, &combo, timestamp);
         }
         if (all_keys_released) {
@@ -637,7 +732,6 @@ static int runtime_combo_test_init(void) {
     struct zmk_runtime_combo_config combo = {
         .enabled = true,
         .key_position_len = 2,
-        .timeout_ms = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_TIMEOUT_MS,
         .behavior = {.behavior_dev = key_press, .param1 = B},
         .key_positions = {0, 1},
     };
