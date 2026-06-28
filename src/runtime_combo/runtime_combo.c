@@ -722,6 +722,8 @@ static int runtime_combo_init(void) {
 SYS_INIT(runtime_combo_init, APPLICATION, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 
 #if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
+#define RUNTIME_COMBO_TEST_INIT_PRIORITY 91
+
 static int runtime_combo_test_init(void) {
     const char *key_press = "key_press";
     if (zmk_behavior_get_local_id(key_press) == UINT16_MAX) {
@@ -745,5 +747,5 @@ static int runtime_combo_test_init(void) {
     return 0;
 }
 
-SYS_INIT(runtime_combo_test_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
+SYS_INIT(runtime_combo_test_init, APPLICATION, RUNTIME_COMBO_TEST_INIT_PRIORITY);
 #endif
