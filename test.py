@@ -13,6 +13,7 @@ THIS_DIR = Path(__file__).parent.resolve()
 def run_west(args: list[str]) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.setdefault("CMAKE_BUILD_PARALLEL_LEVEL", "1")
+    env.setdefault("J", "1")
     return subprocess.run(
         ["west", *args],
         capture_output=True,
