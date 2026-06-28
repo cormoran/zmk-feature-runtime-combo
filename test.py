@@ -49,14 +49,28 @@ class WestCommandsTests(unittest.TestCase):
         platform.system() == "Linux", "zmk-test is only supported on Linux"
     )
     def test_zmk_test(self):
-        test_build_dir = self.BUILD_DIR / THIS_DIR.name
-        shutil.rmtree(test_build_dir, ignore_errors=True)
+        for test_case in ("test", "studio"):
+            test_build_dir = self.BUILD_DIR / THIS_DIR.name / test_case
+            shutil.rmtree(test_build_dir, ignore_errors=True)
 
-        result = run_west(["zmk-test", "tests", "-m", ".", "-d", str(test_build_dir)])
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("PASS: test", result.stdout, result.stdout + result.stderr)
-        self.assertIn("PASS: studio", result.stdout, result.stdout + result.stderr)
-        self.assertNotIn("FAILED: ", result.stdout, result.stdout + result.stderr)
+            result = run_west(
+                [
+                    "zmk-test",
+                    f"tests/{test_case}",
+                    "-m",
+                    ".",
+                    "-d",
+                    str(test_build_dir),
+                ]
+            )
+            output = (
+                result.stdout
+                + result.stderr
+                + self._zmk_test_logs(test_build_dir, test_case)
+            )
+            self.assertEqual(result.returncode, 0, output)
+            self.assertIn(f"PASS: {test_case}", result.stdout, output)
+            self.assertNotIn("FAILED: ", result.stdout, output)
 
     def test_zmk_build(self):
         self._test_zmk_build(
@@ -175,6 +189,15 @@ class WestCommandsTests(unittest.TestCase):
             else:
                 if expected not in file_text:
                     self.fail(f"{hint}: {expected} not found in {file_path}")
+
+    def _zmk_test_logs(self, build_dir: Path, test_case: str) -> str:
+        log_dir = build_dir / "tests" / test_case
+        logs = []
+        for log_name in ("build.log", "keycode_events_full.log", "keycode_events.log"):
+            log_path = log_dir / log_name
+            if log_path.exists():
+                logs.append(f"\n--- {log_path} ---\n{log_path.read_text()}")
+        return "".join(logs)
 
 
 if __name__ == "__main__":
