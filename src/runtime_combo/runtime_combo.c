@@ -18,6 +18,7 @@
 #include <cormoran/zmk/custom_settings.h>
 
 #include <dt-bindings/zmk/keys.h>
+#include <drivers/behavior.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/keycode_state_changed.h>
 #include <zmk/events/position_state_changed.h>
@@ -458,20 +459,41 @@ static int count_candidates_for_position(int32_t position, int64_t timestamp) {
     uint8_t highest_active_layer = zmk_keymap_highest_layer_active();
     uint32_t combo_count = zmk_runtime_combo_count();
 
+#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
+    LOG_DBG("Runtime combo candidate check: position=%d timestamp=%lld pending=%u count=%u",
+            position, timestamp, pending_count, combo_count);
+#endif
+
     for (uint32_t i = 0; i < combo_count; i++) {
         struct zmk_runtime_combo_config combo;
-        if (read_enabled_combo(i, &combo) < 0) {
+        int ret = read_enabled_combo(i, &combo);
+        if (ret < 0) {
+#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
+            LOG_DBG("Runtime combo %u skipped: read ret=%d", i, ret);
+#endif
             continue;
         }
-        if (!combo_contains_position(&combo, position) ||
-            !combo_active_on_layer(&combo, highest_active_layer) ||
-            is_quick_tap(&combo, timestamp)) {
+        bool contains_position = combo_contains_position(&combo, position);
+        bool active_on_layer = combo_active_on_layer(&combo, highest_active_layer);
+        bool quick_tap = is_quick_tap(&combo, timestamp);
+        if (!contains_position || !active_on_layer || quick_tap) {
+#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
+            LOG_DBG("Runtime combo %u skipped: contains=%d active_layer=%d quick_tap=%d", i,
+                    contains_position, active_on_layer, quick_tap);
+#endif
             continue;
         }
         if (pending_count == 0 || combo_matches_pending(&combo, timestamp)) {
             count++;
+#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
+        } else {
+            LOG_DBG("Runtime combo %u skipped: pending mismatch", i);
+#endif
         }
     }
+#if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
+    LOG_DBG("Runtime combo candidates for position %d: %d", position, count);
+#endif
     return count;
 }
 
