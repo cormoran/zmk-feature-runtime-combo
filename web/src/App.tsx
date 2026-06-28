@@ -1,4 +1,4 @@
-import { useContext, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import "./App.css";
 import { connect as serial_connect } from "@zmkfirmware/zmk-studio-ts-client/transport/serial";
 import {
@@ -6,158 +6,551 @@ import {
   ZMKCustomSubsystem,
   ZMKAppContext,
 } from "@cormoran/zmk-studio-react-hook";
-import { Request, Response } from "./proto/your-name/template/template";
+import {
+  Request,
+  Response,
+} from "./proto/cormoran/runtime_combo/runtime_combo";
+import type {
+  Combo,
+  GlobalSettings,
+} from "./proto/cormoran/runtime_combo/runtime_combo";
 
-export const SUBSYSTEM_IDENTIFIER = "your_name__template";
+export const SUBSYSTEM_IDENTIFIER = "cormoran__runtime_combo";
+
+type ComboDraft = {
+  index: number;
+  name: string;
+  keyPositions: string;
+  behaviorId: number;
+  param1: number;
+  param2: number;
+  layerMask: string;
+  enabled: boolean;
+  persist: boolean;
+};
+
+type GlobalSettingsDraft = {
+  timeoutMs: number;
+  slowRelease: boolean;
+  persist: boolean;
+};
+
+const emptyDraft: ComboDraft = {
+  index: 0,
+  name: "",
+  keyPositions: "0, 1",
+  behaviorId: 0,
+  param1: 0,
+  param2: 0,
+  layerMask: "0",
+  enabled: true,
+  persist: false,
+};
+
+const emptyGlobalSettings: GlobalSettingsDraft = {
+  timeoutMs: 50,
+  slowRelease: false,
+  persist: false,
+};
 
 function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>🔧 ZMK Module Template</h1>
-        <p>Custom Studio RPC Demo</p>
+        <h1>Runtime Combo</h1>
+        <p>Custom Studio RPC editor for runtime configurable ZMK combos</p>
       </header>
 
       <ZMKConnection
         renderDisconnected={({ connect, isLoading, error }) => (
-          <section className="card">
+          <section className="panel">
             <h2>Device Connection</h2>
-            {isLoading && <p>⏳ Connecting...</p>}
-            {error && (
-              <div className="error-message">
-                <p>🚨 {error}</p>
-              </div>
-            )}
+            {isLoading && <p>Connecting...</p>}
+            {error && <p className="message error">{error}</p>}
             {!isLoading && (
               <button
-                className="btn btn-primary"
+                className="btn primary"
                 onClick={() => connect(serial_connect)}
               >
-                🔌 Connect Serial
+                Connect Serial
               </button>
             )}
           </section>
         )}
         renderConnected={({ disconnect, deviceName }) => (
           <>
-            <section className="card">
-              <h2>Device Connection</h2>
-              <div className="device-info">
-                <h3>✅ Connected to: {deviceName}</h3>
+            <section className="panel connection-panel">
+              <div>
+                <h2>Device Connection</h2>
+                <p>Connected to: {deviceName}</p>
               </div>
-              <button className="btn btn-secondary" onClick={disconnect}>
+              <button className="btn" onClick={disconnect}>
                 Disconnect
               </button>
             </section>
-
             <RPCTestSection />
           </>
         )}
       />
-
-      <footer className="app-footer">
-        <p>
-          <strong>Template Module</strong> - Customize this for your ZMK module
-        </p>
-      </footer>
     </div>
   );
 }
 
 export function RPCTestSection() {
   const zmkApp = useContext(ZMKAppContext);
-  const [inputValue, setInputValue] = useState<number>(42);
-  const [response, setResponse] = useState<string | null>(null);
+  const [combos, setCombos] = useState<Combo[]>([]);
+  const [globalSettings, setGlobalSettings] =
+    useState<GlobalSettingsDraft>(emptyGlobalSettings);
+  const [draft, setDraft] = useState<ComboDraft>(emptyDraft);
+  const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  const subsystem = zmkApp?.findSubsystem(SUBSYSTEM_IDENTIFIER);
+  const connection = zmkApp?.state.connection;
+  const subsystemIndex = subsystem?.index;
+
+  const callRuntimeComboRPC = useCallback(
+    async (request: Request): Promise<Response | null> => {
+      if (!connection || subsystemIndex === undefined) return null;
+      const service = new ZMKCustomSubsystem(connection, subsystemIndex);
+      const payload = Request.encode(request).finish();
+      const responsePayload = await service.callRPC(payload);
+      return responsePayload ? Response.decode(responsePayload) : null;
+    },
+    [connection, subsystemIndex]
+  );
+
+  const refreshCombos = useCallback(async () => {
+    if (!connection || subsystemIndex === undefined) return;
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const resp = await callRuntimeComboRPC(
+        Request.create({ listCombos: {} })
+      );
+      if (resp?.listCombos) {
+        setCombos(resp.listCombos.combos);
+      } else if (resp?.error) {
+        setMessage(resp.error.message);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RPC failed");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [callRuntimeComboRPC, connection, subsystemIndex]);
+
+  const refreshGlobalSettings = useCallback(async () => {
+    if (!connection || subsystemIndex === undefined) return;
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const resp = await callRuntimeComboRPC(
+        Request.create({ getGlobalSettings: {} })
+      );
+      if (resp?.getGlobalSettings?.settings) {
+        const settings: GlobalSettings = resp.getGlobalSettings.settings;
+        setGlobalSettings({
+          timeoutMs: settings.timeoutMs || 50,
+          slowRelease: settings.slowRelease,
+          persist: false,
+        });
+      } else if (resp?.error) {
+        setMessage(resp.error.message);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RPC failed");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [callRuntimeComboRPC, connection, subsystemIndex]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void refreshCombos();
+      void refreshGlobalSettings();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [refreshCombos, refreshGlobalSettings]);
 
   if (!zmkApp) return null;
 
-  const subsystem = zmkApp.findSubsystem(SUBSYSTEM_IDENTIFIER);
+  if (!subsystem) {
+    return (
+      <section className="panel">
+        <p className="message warning">
+          Subsystem "{SUBSYSTEM_IDENTIFIER}" not found. Make sure your firmware
+          includes the runtime combo module.
+        </p>
+      </section>
+    );
+  }
 
-  const sendSampleRequest = async () => {
-    if (!zmkApp.state.connection || !subsystem) return;
+  const selectCombo = (combo: Combo) => {
+    setDraft({
+      index: combo.index,
+      name: combo.name,
+      keyPositions: combo.keyPositions.join(", "),
+      behaviorId: combo.behavior?.behaviorId ?? 0,
+      param1: combo.behavior?.param1 ?? 0,
+      param2: combo.behavior?.param2 ?? 0,
+      layerMask: `0x${(combo.layerMask ?? 0).toString(16)}`,
+      enabled: combo.enabled,
+      persist: false,
+    });
+  };
 
+  const parsePositions = () =>
+    draft.keyPositions
+      .split(",")
+      .map((part) => Number.parseInt(part.trim(), 10))
+      .filter((value) => Number.isInteger(value) && value >= 0);
+
+  const parseLayerMask = () => {
+    const value = draft.layerMask.trim();
+    return value.startsWith("0x")
+      ? Number.parseInt(value.slice(2), 16)
+      : Number.parseInt(value || "0", 10);
+  };
+
+  const saveCombo = async () => {
     setIsLoading(true);
-    setResponse(null);
-
+    setMessage(null);
     try {
-      const service = new ZMKCustomSubsystem(
-        zmkApp.state.connection,
-        subsystem.index
+      const resp = await callRuntimeComboRPC(
+        Request.create({
+          setCombo: {
+            index: draft.index,
+            keyPositions: parsePositions(),
+            behavior: {
+              behaviorId: draft.behaviorId,
+              param1: draft.param1,
+              param2: draft.param2,
+            },
+            layerMask: parseLayerMask(),
+            enabled: draft.enabled,
+            persist: draft.persist,
+          },
+        })
       );
-
-      const request = Request.create({
-        sample: {
-          value: inputValue,
-        },
-      });
-
-      const payload = Request.encode(request).finish();
-      const responsePayload = await service.callRPC(payload);
-
-      if (responsePayload) {
-        const resp = Response.decode(responsePayload);
-        console.log("Decoded response:", resp);
-
-        if (resp.sample) {
-          setResponse(resp.sample.value);
-        } else if (resp.error) {
-          setResponse(`Error: ${resp.error.message}`);
-        }
+      if (resp?.error) {
+        setMessage(resp.error.message);
+        return;
       }
-    } catch (error) {
-      console.error("RPC call failed:", error);
-      setResponse(
-        `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
+      const nameResp = await callRuntimeComboRPC(
+        Request.create({
+          setComboName: {
+            index: draft.index,
+            name: draft.name,
+            persist: draft.persist,
+          },
+        })
       );
+      setMessage(nameResp?.error?.message ?? "Combo saved");
+      await refreshCombos();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RPC failed");
     } finally {
       setIsLoading(false);
     }
   };
 
-  if (!subsystem) {
-    return (
-      <section className="card">
-        <div className="warning-message">
-          <p>
-            ⚠️ Subsystem "{SUBSYSTEM_IDENTIFIER}" not found. Make sure your
-            firmware includes the template module.
-          </p>
-        </div>
-      </section>
-    );
-  }
+  const saveTimeoutMs = async () => {
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const resp = await callRuntimeComboRPC(
+        Request.create({
+          setTimeoutMs: {
+            timeoutMs: globalSettings.timeoutMs,
+            persist: globalSettings.persist,
+          },
+        })
+      );
+      setMessage(resp?.error?.message ?? "Timeout saved");
+      await refreshGlobalSettings();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RPC failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveSlowRelease = async () => {
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const resp = await callRuntimeComboRPC(
+        Request.create({
+          setSlowRelease: {
+            slowRelease: globalSettings.slowRelease,
+            persist: globalSettings.persist,
+          },
+        })
+      );
+      setMessage(resp?.error?.message ?? "Slow release saved");
+      await refreshGlobalSettings();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RPC failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const disableCombo = async () => {
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const resp = await callRuntimeComboRPC(
+        Request.create({
+          deleteCombo: { index: draft.index, persist: draft.persist },
+        })
+      );
+      setMessage(resp?.error?.message ?? "Combo disabled");
+      await refreshCombos();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RPC failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const keyboardAbyssPreview = {
+    type: "raw",
+    zmk: `behavior#${draft.behaviorId} ${draft.param1} ${draft.param2}`,
+    label: draft.name || `Combo ${draft.index}`,
+  };
 
   return (
-    <section className="card">
-      <h2>RPC Test</h2>
-      <p>Send a sample request to the firmware:</p>
-
-      <div className="input-group">
-        <label htmlFor="value-input">Value:</label>
-        <input
-          id="value-input"
-          type="number"
-          value={inputValue}
-          onChange={(e) => setInputValue(parseInt(e.target.value) || 0)}
-        />
-      </div>
-
-      <button
-        className="btn btn-primary"
-        disabled={isLoading}
-        onClick={sendSampleRequest}
-      >
-        {isLoading ? "⏳ Sending..." : "📤 Send Request"}
-      </button>
-
-      {response && (
-        <div className="response-box">
-          <h3>Response from Firmware:</h3>
-          <pre>{response}</pre>
+    <main className="runtime-combo">
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <h2>Runtime Combos</h2>
+            <p>{combos.length} configured slots</p>
+          </div>
+          <button className="btn" disabled={isLoading} onClick={refreshCombos}>
+            Refresh
+          </button>
         </div>
-      )}
-    </section>
+
+        <div className="combo-list">
+          {combos.length === 0 && <p>No runtime combos configured.</p>}
+          {combos.map((combo) => (
+            <button
+              key={combo.index}
+              className={`combo-row ${combo.enabled ? "" : "disabled"}`}
+              onClick={() => selectCombo(combo)}
+            >
+              <span>#{combo.index}</span>
+              <strong>{combo.name || "Unnamed combo"}</strong>
+              <span>{combo.keyPositions.join(" + ") || "No positions"}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel editor">
+        <div className="section-heading">
+          <div>
+            <h2>Global Settings</h2>
+            <p>Applied to every runtime combo</p>
+          </div>
+          <button
+            className="btn"
+            disabled={isLoading}
+            onClick={refreshGlobalSettings}
+          >
+            Refresh
+          </button>
+        </div>
+
+        <div className="form-grid">
+          <label>
+            Timeout ms
+            <input
+              type="number"
+              min="1"
+              max="65535"
+              value={globalSettings.timeoutMs}
+              onChange={(event) =>
+                setGlobalSettings({
+                  ...globalSettings,
+                  timeoutMs: Number(event.target.value),
+                })
+              }
+            />
+          </label>
+        </div>
+
+        <div className="switches">
+          <label>
+            <input
+              type="checkbox"
+              checked={globalSettings.slowRelease}
+              onChange={(event) =>
+                setGlobalSettings({
+                  ...globalSettings,
+                  slowRelease: event.target.checked,
+                })
+              }
+            />
+            Slow release
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={globalSettings.persist}
+              onChange={(event) =>
+                setGlobalSettings({
+                  ...globalSettings,
+                  persist: event.target.checked,
+                })
+              }
+            />
+            Persist global settings
+          </label>
+        </div>
+
+        <div className="actions">
+          <button
+            className="btn primary"
+            disabled={isLoading}
+            onClick={saveTimeoutMs}
+          >
+            Save Timeout
+          </button>
+          <button
+            className="btn"
+            disabled={isLoading}
+            onClick={saveSlowRelease}
+          >
+            Save Slow Release
+          </button>
+        </div>
+      </section>
+
+      <section className="panel editor">
+        <h2>Combo Editor</h2>
+        <div className="form-grid">
+          <label>
+            Slot
+            <input
+              type="number"
+              min="0"
+              value={draft.index}
+              onChange={(event) =>
+                setDraft({ ...draft, index: Number(event.target.value) })
+              }
+            />
+          </label>
+          <label>
+            Name
+            <input
+              value={draft.name}
+              maxLength={64}
+              onChange={(event) =>
+                setDraft({ ...draft, name: event.target.value })
+              }
+            />
+          </label>
+          <label>
+            Positions
+            <input
+              value={draft.keyPositions}
+              onChange={(event) =>
+                setDraft({ ...draft, keyPositions: event.target.value })
+              }
+            />
+          </label>
+          <label>
+            Behavior ID
+            <input
+              type="number"
+              min="0"
+              value={draft.behaviorId}
+              onChange={(event) =>
+                setDraft({ ...draft, behaviorId: Number(event.target.value) })
+              }
+            />
+          </label>
+          <label>
+            Param 1
+            <input
+              type="number"
+              min="0"
+              value={draft.param1}
+              onChange={(event) =>
+                setDraft({ ...draft, param1: Number(event.target.value) })
+              }
+            />
+          </label>
+          <label>
+            Param 2
+            <input
+              type="number"
+              min="0"
+              value={draft.param2}
+              onChange={(event) =>
+                setDraft({ ...draft, param2: Number(event.target.value) })
+              }
+            />
+          </label>
+          <label>
+            Layer mask
+            <input
+              value={draft.layerMask}
+              onChange={(event) =>
+                setDraft({ ...draft, layerMask: event.target.value })
+              }
+            />
+          </label>
+        </div>
+
+        <div className="switches">
+          <label>
+            <input
+              type="checkbox"
+              checked={draft.enabled}
+              onChange={(event) =>
+                setDraft({ ...draft, enabled: event.target.checked })
+              }
+            />
+            Enabled
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={draft.persist}
+              onChange={(event) =>
+                setDraft({ ...draft, persist: event.target.checked })
+              }
+            />
+            Persist to settings
+          </label>
+        </div>
+
+        <div className="actions">
+          <button
+            className="btn primary"
+            disabled={isLoading}
+            onClick={saveCombo}
+          >
+            Save Combo
+          </button>
+          <button className="btn" disabled={isLoading} onClick={disableCombo}>
+            Disable
+          </button>
+        </div>
+
+        {message && <p className="message">{message}</p>}
+
+        <div className="preview">
+          <h3>keyboard-abyss binding preview</h3>
+          <pre>{JSON.stringify(keyboardAbyssPreview, null, 2)}</pre>
+        </div>
+      </section>
+    </main>
   );
 }
 
