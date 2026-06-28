@@ -16,6 +16,7 @@
 
 #include <cormoran/runtime_combo/runtime_combo.h>
 #include <cormoran/runtime_combo/runtime_combo.pb.h>
+#include <cormoran/zmk/custom_settings.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -163,9 +164,10 @@ static int handle_get_global_settings(cormoran_runtime_combo_Response *resp) {
     return 0;
 }
 
-static void set_status(cormoran_runtime_combo_Response *resp, const char *message) {
+static void set_status(cormoran_runtime_combo_Response *resp, const char *message,
+                       uint32_t affected_count) {
     cormoran_runtime_combo_StatusResponse status = cormoran_runtime_combo_StatusResponse_init_zero;
-    status.affected_count = 1;
+    status.affected_count = affected_count;
     snprintf(status.message, sizeof(status.message), "%s", message);
     resp->which_response_type = cormoran_runtime_combo_Response_status_tag;
     resp->response_type.status = status;
@@ -184,7 +186,7 @@ static int handle_set_combo(const cormoran_runtime_combo_SetComboRequest *req,
         return ret;
     }
 
-    set_status(resp, "Combo written");
+    set_status(resp, "Combo written", 1);
     return 0;
 }
 
@@ -195,7 +197,7 @@ static int handle_set_combo_name(const cormoran_runtime_combo_SetComboNameReques
         return ret;
     }
 
-    set_status(resp, "Combo name written");
+    set_status(resp, "Combo name written", 1);
     return 0;
 }
 
@@ -206,7 +208,7 @@ static int handle_delete_combo(const cormoran_runtime_combo_DeleteComboRequest *
         return ret;
     }
 
-    set_status(resp, "Combo disabled");
+    set_status(resp, "Combo disabled", 1);
     return 0;
 }
 
@@ -221,7 +223,7 @@ static int handle_set_timeout_ms(const cormoran_runtime_combo_SetTimeoutMsReques
         return ret;
     }
 
-    set_status(resp, "Runtime combo timeout written");
+    set_status(resp, "Runtime combo timeout written", 1);
     return 0;
 }
 
@@ -232,7 +234,31 @@ static int handle_set_slow_release(const cormoran_runtime_combo_SetSlowReleaseRe
         return ret;
     }
 
-    set_status(resp, "Runtime combo slow release written");
+    set_status(resp, "Runtime combo slow release written", 1);
+    return 0;
+}
+
+static int handle_save(cormoran_runtime_combo_Response *resp) {
+    uint32_t affected_count = 0;
+    int ret =
+        zmk_custom_settings_save_scope(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, NULL, NULL, &affected_count);
+    if (ret < 0) {
+        return ret;
+    }
+
+    set_status(resp, "Runtime combo settings saved", affected_count);
+    return 0;
+}
+
+static int handle_discard(cormoran_runtime_combo_Response *resp) {
+    uint32_t affected_count = 0;
+    int ret = zmk_custom_settings_discard_scope(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, NULL, NULL,
+                                                &affected_count);
+    if (ret < 0) {
+        return ret;
+    }
+
+    set_status(resp, "Runtime combo settings discarded", affected_count);
     return 0;
 }
 
@@ -276,6 +302,12 @@ static bool runtime_combo_rpc_handle_request(const zmk_custom_CallRequest *raw_r
         break;
     case cormoran_runtime_combo_Request_set_slow_release_tag:
         ret = handle_set_slow_release(&req.request_type.set_slow_release, resp);
+        break;
+    case cormoran_runtime_combo_Request_save_tag:
+        ret = handle_save(resp);
+        break;
+    case cormoran_runtime_combo_Request_discard_tag:
+        ret = handle_discard(resp);
         break;
     default:
         ret = -ENOTSUP;

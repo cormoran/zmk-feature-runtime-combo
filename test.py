@@ -1,4 +1,3 @@
-import os
 import platform
 import re
 import shutil
@@ -14,15 +13,11 @@ THIS_DIR = Path(__file__).parent.resolve()
 def run_west(
     args: list[str], cwd: Path | None = None
 ) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
-    env.setdefault("CMAKE_BUILD_PARALLEL_LEVEL", "1")
-    env.setdefault("J", "1")
     return subprocess.run(
         ["west", *args],
         capture_output=True,
         text=True,
         cwd=cwd or THIS_DIR,
-        env=env,
     )
 
 
@@ -132,35 +127,35 @@ class WestCommandsTests(unittest.TestCase):
         for artifact in artifacts_and_expected_build_params.keys():
             shutil.rmtree(self.BUILD_DIR / artifact, ignore_errors=True)
 
+        zephyr_cache_dir = self.BUILD_DIR / ".zephyr-cache"
+        toolchain_cache_dir = zephyr_cache_dir / "ToolchainCapabilityDatabase"
+        toolchain_cache_dir.mkdir(parents=True, exist_ok=True)
+
+        result = run_west(
+            [
+                "zmk-build",
+                str(THIS_DIR / "tests" / "zmk-config"),
+                "-q",
+                "-m",
+                str(THIS_DIR),
+                str(self.CUSTOM_SETTINGS_MODULE),
+                "-d",
+                str(self.BUILD_DIR),
+                "--cmake-args",
+                (
+                    f"-DUSER_CACHE_DIR={zephyr_cache_dir} "
+                    f"-DZEPHYR_TOOLCHAIN_CAPABILITY_CACHE_DIR={toolchain_cache_dir}"
+                ),
+            ],
+            cwd=self.WEST_CWD,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"zmk-build failed\n{result.stdout}{result.stderr}",
+        )
+
         for artifact, entries in artifacts_and_expected_build_params.items():
-            zephyr_cache_dir = self.BUILD_DIR / ".zephyr-cache" / artifact
-
-            result = run_west(
-                [
-                    "zmk-build",
-                    str(THIS_DIR / "tests" / "zmk-config"),
-                    "-q",
-                    "-m",
-                    str(THIS_DIR),
-                    str(self.CUSTOM_SETTINGS_MODULE),
-                    "-af",
-                    f"^{artifact}$",
-                    "-d",
-                    str(self.BUILD_DIR),
-                    "--cmake-args",
-                    (
-                        f"-DUSER_CACHE_DIR={zephyr_cache_dir} "
-                        f"-DZEPHYR_TOOLCHAIN_CAPABILITY_CACHE_DIR={zephyr_cache_dir / 'ToolchainCapabilityDatabase'}"
-                    ),
-                ],
-                cwd=self.WEST_CWD,
-            )
-            self.assertEqual(
-                result.returncode,
-                0,
-                f"{artifact} build failed\n{result.stdout}{result.stderr}",
-            )
-
             artifact_dir = self.BUILD_DIR / artifact / "zephyr"
             config_path = artifact_dir / ".config"
             device_tree_path = (

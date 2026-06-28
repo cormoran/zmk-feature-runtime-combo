@@ -58,6 +58,10 @@ message SetSlowReleaseRequest {
     bool persist = 2;
 }
 
+message SaveRequest {}
+
+message DiscardRequest {}
+
 message Request {
     oneof request_type {
         ListCombosRequest list_combos = 1;
@@ -68,6 +72,8 @@ message Request {
         GetGlobalSettingsRequest get_global_settings = 6;
         SetTimeoutMsRequest set_timeout_ms = 7;
         SetSlowReleaseRequest set_slow_release = 8;
+        SaveRequest save = 9;
+        DiscardRequest discard = 10;
     }
 }
 
