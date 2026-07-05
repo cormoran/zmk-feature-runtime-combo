@@ -8,6 +8,13 @@ message BehaviorBinding {
     uint32 param2 = 3;
 }
 
+// Tri-state override for the global slow-release setting.
+enum SlowReleaseOverride {
+    SLOW_RELEASE_OVERRIDE_INHERIT = 0;
+    SLOW_RELEASE_OVERRIDE_ON = 1;
+    SLOW_RELEASE_OVERRIDE_OFF = 2;
+}
+
 message Combo {
     uint32 index = 1;
     string name = 2;
@@ -15,12 +22,19 @@ message Combo {
     BehaviorBinding behavior = 4;
     uint32 layer_mask = 6;
     bool enabled = 8;
+    // 0 means inherit the global timeout.
+    uint32 timeout_ms = 9;
+    // 0 means inherit the global require-prior-idle setting.
+    uint32 require_prior_idle_ms = 10;
+    SlowReleaseOverride slow_release_override = 11;
 }
 
 message GlobalSettings {
     uint32 timeout_ms = 1;
     bool slow_release = 2;
     uint32 max_combo = 3;
+    // 0 disables the require-prior-idle guard.
+    uint32 require_prior_idle_ms = 4;
 }
 
 message ListCombosRequest {}
@@ -34,6 +48,11 @@ message SetComboRequest {
     uint32 layer_mask = 5;
     bool enabled = 7;
     bool persist = 8;
+    // 0 means inherit the global timeout.
+    uint32 timeout_ms = 9;
+    // 0 means inherit the global require-prior-idle setting.
+    uint32 require_prior_idle_ms = 10;
+    SlowReleaseOverride slow_release_override = 11;
 }
 
 message SetComboNameRequest {
@@ -59,6 +78,11 @@ message SetSlowReleaseRequest {
     bool persist = 2;
 }
 
+message SetRequirePriorIdleMsRequest {
+    uint32 require_prior_idle_ms = 1;
+    bool persist = 2;
+}
+
 message SaveRequest {}
 
 message DiscardRequest {}
@@ -75,6 +99,7 @@ message Request {
         SetSlowReleaseRequest set_slow_release = 8;
         SaveRequest save = 9;
         DiscardRequest discard = 10;
+        SetRequirePriorIdleMsRequest set_require_prior_idle_ms = 11;
     }
 }
 

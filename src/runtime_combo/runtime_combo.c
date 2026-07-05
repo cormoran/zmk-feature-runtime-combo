@@ -28,9 +28,12 @@
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
-#define RUNTIME_COMBO_STORAGE_VERSION 2
+#define RUNTIME_COMBO_STORAGE_VERSION 3
 #define RUNTIME_COMBO_FLAG_ENABLED BIT(0)
-#define RUNTIME_COMBO_PACKED_HEADER_SIZE 18
+#define RUNTIME_COMBO_FLAG_SLOW_RELEASE_OVERRIDE BIT(1)
+#define RUNTIME_COMBO_FLAG_SLOW_RELEASE_VALUE BIT(2)
+#define RUNTIME_COMBO_PACKED_HEADER_SIZE_V2 18
+#define RUNTIME_COMBO_PACKED_HEADER_SIZE 22
 #define RUNTIME_COMBO_PACKED_MAX_SIZE                                                              \
     (RUNTIME_COMBO_PACKED_HEADER_SIZE +                                                            \
      (CONFIG_ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO * sizeof(uint16_t)))
@@ -122,6 +125,27 @@ STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_slow_release) = {
     .temp_slot = -1,
 };
 
+static const struct zmk_custom_setting_constraint
+    runtime_combo_require_prior_idle_ms_constraints[] = {
+        {.type = ZMK_CUSTOM_SETTING_CONSTRAINT_RANGE,
+         .range = {.min = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32, .int32_value = 0},
+                   .max = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32, .int32_value = 65535}}},
+};
+
+STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_require_prior_idle_ms) = {
+    .custom_subsystem_id = ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+    .key = ZMK_RUNTIME_COMBO_REQUIRE_PRIOR_IDLE_MS_KEY,
+    .array_index = ZMK_CUSTOM_SETTING_ARRAY_NONE,
+    .value_type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
+    .confidentiality = ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC,
+    .read_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+    .write_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+    .constraints = runtime_combo_require_prior_idle_ms_constraints,
+    .constraints_count = ARRAY_SIZE(runtime_combo_require_prior_idle_ms_constraints),
+    .default_value = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
+                      .int32_value = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_REQUIRE_PRIOR_IDLE_MS},
+};
+
 struct runtime_combo_active {
     uint16_t combo_idx;
     uint8_t key_positions_pressed_count;
@@ -138,6 +162,12 @@ static struct k_work_delayable timeout_task;
 static int64_t timeout_task_timeout_at;
 static int64_t last_tapped_timestamp = INT32_MIN;
 static int64_t last_combo_timestamp = INT32_MIN;
+/* Index of a combo whose positions are all pressed but which is being held back
+ * because a strict superset combo is still viable. -1 means none. */
+static int32_t fully_pressed_combo_idx = -1;
+
+static void finish_pending_and_activate(uint32_t combo_idx,
+                                        const struct zmk_runtime_combo_config *combo);
 
 static void put_u16(uint8_t *dest, uint16_t value) { sys_put_le16(value, dest); }
 static void put_u32(uint8_t *dest, uint32_t value) { sys_put_le32(value, dest); }
@@ -171,20 +201,41 @@ static int packed_to_combo(const struct zmk_custom_setting_value *value,
         *combo = (struct zmk_runtime_combo_config){0};
         return 0;
     }
-    if (value->size < RUNTIME_COMBO_PACKED_HEADER_SIZE ||
-        value->bytes_value[0] != RUNTIME_COMBO_STORAGE_VERSION) {
+
+    uint8_t version = value->bytes_value[0];
+    if (version != 2 && version != RUNTIME_COMBO_STORAGE_VERSION) {
+        return -EINVAL;
+    }
+    size_t header_size =
+        version >= 3 ? RUNTIME_COMBO_PACKED_HEADER_SIZE : RUNTIME_COMBO_PACKED_HEADER_SIZE_V2;
+    if (value->size < header_size) {
         return -EINVAL;
     }
 
     uint8_t key_position_len = value->bytes_value[2];
     if (key_position_len < 2 ||
         key_position_len > CONFIG_ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO ||
-        value->size != RUNTIME_COMBO_PACKED_HEADER_SIZE + key_position_len * sizeof(uint16_t)) {
+        value->size != header_size + key_position_len * sizeof(uint16_t)) {
         return -EINVAL;
     }
 
+    uint8_t flags = value->bytes_value[1];
+    enum zmk_runtime_combo_slow_release_override slow_release_override =
+        ZMK_RUNTIME_COMBO_SLOW_RELEASE_INHERIT;
+    uint16_t timeout_ms = 0;
+    uint16_t require_prior_idle_ms = 0;
+    if (version >= 3) {
+        if (flags & RUNTIME_COMBO_FLAG_SLOW_RELEASE_OVERRIDE) {
+            slow_release_override = (flags & RUNTIME_COMBO_FLAG_SLOW_RELEASE_VALUE)
+                                        ? ZMK_RUNTIME_COMBO_SLOW_RELEASE_ON
+                                        : ZMK_RUNTIME_COMBO_SLOW_RELEASE_OFF;
+        }
+        timeout_ms = get_u16(&value->bytes_value[18]);
+        require_prior_idle_ms = get_u16(&value->bytes_value[20]);
+    }
+
     *combo = (struct zmk_runtime_combo_config){
-        .enabled = (value->bytes_value[1] & RUNTIME_COMBO_FLAG_ENABLED) != 0,
+        .enabled = (flags & RUNTIME_COMBO_FLAG_ENABLED) != 0,
         .key_position_len = key_position_len,
         .layer_mask = get_u32(&value->bytes_value[4]),
         .behavior =
@@ -192,6 +243,9 @@ static int packed_to_combo(const struct zmk_custom_setting_value *value,
                 .param1 = get_u32(&value->bytes_value[10]),
                 .param2 = get_u32(&value->bytes_value[14]),
             },
+        .timeout_ms = timeout_ms,
+        .require_prior_idle_ms = require_prior_idle_ms,
+        .slow_release_override = slow_release_override,
     };
 
     zmk_behavior_local_id_t behavior_id = get_u16(&value->bytes_value[8]);
@@ -205,8 +259,7 @@ static int packed_to_combo(const struct zmk_custom_setting_value *value,
 #endif
 
     for (uint8_t i = 0; i < key_position_len; i++) {
-        combo->key_positions[i] =
-            get_u16(&value->bytes_value[RUNTIME_COMBO_PACKED_HEADER_SIZE + i * sizeof(uint16_t)]);
+        combo->key_positions[i] = get_u16(&value->bytes_value[header_size + i * sizeof(uint16_t)]);
     }
     return 0;
 }
@@ -236,14 +289,23 @@ static int combo_to_packed(const struct zmk_runtime_combo_config *combo,
         .type = ZMK_CUSTOM_SETTING_VALUE_TYPE_BYTES,
         .size = RUNTIME_COMBO_PACKED_HEADER_SIZE + combo->key_position_len * sizeof(uint16_t),
     };
+    uint8_t flags = combo->enabled ? RUNTIME_COMBO_FLAG_ENABLED : 0;
+    if (combo->slow_release_override != ZMK_RUNTIME_COMBO_SLOW_RELEASE_INHERIT) {
+        flags |= RUNTIME_COMBO_FLAG_SLOW_RELEASE_OVERRIDE;
+        if (combo->slow_release_override == ZMK_RUNTIME_COMBO_SLOW_RELEASE_ON) {
+            flags |= RUNTIME_COMBO_FLAG_SLOW_RELEASE_VALUE;
+        }
+    }
     value->bytes_value[0] = RUNTIME_COMBO_STORAGE_VERSION;
-    value->bytes_value[1] = combo->enabled ? RUNTIME_COMBO_FLAG_ENABLED : 0;
+    value->bytes_value[1] = flags;
     value->bytes_value[2] = combo->key_position_len;
     value->bytes_value[3] = 0;
     put_u32(&value->bytes_value[4], combo->layer_mask);
     put_u16(&value->bytes_value[8], behavior_id);
     put_u32(&value->bytes_value[10], combo->behavior.param1);
     put_u32(&value->bytes_value[14], combo->behavior.param2);
+    put_u16(&value->bytes_value[18], combo->timeout_ms);
+    put_u16(&value->bytes_value[20], combo->require_prior_idle_ms);
 
     for (uint8_t i = 0; i < combo->key_position_len; i++) {
         put_u16(&value->bytes_value[RUNTIME_COMBO_PACKED_HEADER_SIZE + i * sizeof(uint16_t)],
@@ -312,10 +374,24 @@ int zmk_runtime_combo_read_global_settings(struct zmk_runtime_combo_global_setti
         return -EINVAL;
     }
 
+    struct zmk_custom_setting_value require_prior_idle_value;
+    ret = zmk_custom_setting_read_by_key(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+                                         ZMK_RUNTIME_COMBO_REQUIRE_PRIOR_IDLE_MS_KEY,
+                                         &require_prior_idle_value);
+    if (ret < 0) {
+        return ret;
+    }
+    if (require_prior_idle_value.type != ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32 ||
+        require_prior_idle_value.int32_value < 0 ||
+        require_prior_idle_value.int32_value > UINT16_MAX) {
+        return -EINVAL;
+    }
+
     *settings = (struct zmk_runtime_combo_global_settings){
         .timeout_ms = timeout_value.int32_value,
         .slow_release = slow_release_value.bool_value,
         .max_combo = zmk_runtime_combo_max_count(),
+        .require_prior_idle_ms = require_prior_idle_value.int32_value,
     };
     return 0;
 }
@@ -401,6 +477,13 @@ int zmk_runtime_combo_write_slow_release(bool slow_release, bool persist) {
         persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
 }
 
+int zmk_runtime_combo_write_require_prior_idle_ms(uint16_t require_prior_idle_ms, bool persist) {
+    struct zmk_custom_setting_value value = ZMK_CUSTOM_SETTING_VALUE_INT32(require_prior_idle_ms);
+    return zmk_custom_setting_write_by_key(
+        ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, ZMK_RUNTIME_COMBO_REQUIRE_PRIOR_IDLE_MS_KEY, &value,
+        persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
+}
+
 int zmk_runtime_combo_delete(uint32_t index, bool persist) {
     struct zmk_runtime_combo_config combo;
     int ret = zmk_runtime_combo_read(index, &combo);
@@ -429,6 +512,7 @@ static struct zmk_runtime_combo_global_settings current_global_settings(void) {
     struct zmk_runtime_combo_global_settings settings = {
         .timeout_ms = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_TIMEOUT_MS,
         .slow_release = false,
+        .require_prior_idle_ms = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_REQUIRE_PRIOR_IDLE_MS,
     };
     if (zmk_runtime_combo_read_global_settings(&settings) < 0) {
         LOG_WRN("Using default runtime combo global settings");
@@ -436,11 +520,37 @@ static struct zmk_runtime_combo_global_settings current_global_settings(void) {
     return settings;
 }
 
-static bool combo_matches_pending(const struct zmk_runtime_combo_config *combo, int64_t timestamp) {
+static uint16_t effective_timeout_ms(const struct zmk_runtime_combo_config *combo,
+                                     const struct zmk_runtime_combo_global_settings *global) {
+    return combo->timeout_ms != 0 ? combo->timeout_ms : global->timeout_ms;
+}
+
+static uint16_t
+effective_require_prior_idle_ms(const struct zmk_runtime_combo_config *combo,
+                                const struct zmk_runtime_combo_global_settings *global) {
+    return combo->require_prior_idle_ms != 0 ? combo->require_prior_idle_ms
+                                             : global->require_prior_idle_ms;
+}
+
+static bool effective_slow_release(const struct zmk_runtime_combo_config *combo,
+                                   const struct zmk_runtime_combo_global_settings *global) {
+    switch (combo->slow_release_override) {
+    case ZMK_RUNTIME_COMBO_SLOW_RELEASE_ON:
+        return true;
+    case ZMK_RUNTIME_COMBO_SLOW_RELEASE_OFF:
+        return false;
+    default:
+        return global->slow_release;
+    }
+}
+
+static bool combo_matches_pending(const struct zmk_runtime_combo_config *combo,
+                                  const struct zmk_runtime_combo_global_settings *global,
+                                  int64_t timestamp) {
     if (!combo->enabled || pending_count == 0) {
         return false;
     }
-    uint16_t timeout_ms = current_global_settings().timeout_ms;
+    uint16_t timeout_ms = effective_timeout_ms(combo, global);
     if (pending_keys[0].data.timestamp + timeout_ms <= timestamp) {
         return false;
     }
@@ -452,9 +562,15 @@ static bool combo_matches_pending(const struct zmk_runtime_combo_config *combo, 
     return true;
 }
 
-static bool is_quick_tap(const struct zmk_runtime_combo_config *combo, int64_t timestamp) {
-    ARG_UNUSED(combo);
-    return last_tapped_timestamp > last_combo_timestamp && last_tapped_timestamp > timestamp;
+static bool is_quick_tap(const struct zmk_runtime_combo_config *combo,
+                         const struct zmk_runtime_combo_global_settings *global,
+                         int64_t timestamp) {
+    uint16_t require_prior_idle_ms = effective_require_prior_idle_ms(combo, global);
+    if (require_prior_idle_ms == 0 || last_tapped_timestamp == INT32_MIN) {
+        return false;
+    }
+    return last_tapped_timestamp > last_combo_timestamp &&
+           last_tapped_timestamp + require_prior_idle_ms > timestamp;
 }
 
 static int read_enabled_combo(uint32_t index, struct zmk_runtime_combo_config *combo) {
@@ -469,6 +585,7 @@ static int count_candidates_for_position(int32_t position, int64_t timestamp) {
     int count = 0;
     uint8_t highest_active_layer = zmk_keymap_highest_layer_active();
     uint32_t combo_count = zmk_runtime_combo_count();
+    struct zmk_runtime_combo_global_settings global = current_global_settings();
 
     for (uint32_t i = 0; i < combo_count; i++) {
         struct zmk_runtime_combo_config combo;
@@ -477,14 +594,38 @@ static int count_candidates_for_position(int32_t position, int64_t timestamp) {
         }
         if (!combo_contains_position(&combo, position) ||
             !combo_active_on_layer(&combo, highest_active_layer) ||
-            is_quick_tap(&combo, timestamp)) {
+            is_quick_tap(&combo, &global, timestamp)) {
             continue;
         }
-        if (pending_count == 0 || combo_matches_pending(&combo, timestamp)) {
+        if (pending_count == 0 || combo_matches_pending(&combo, &global, timestamp)) {
             count++;
         }
     }
     return count;
+}
+
+/* True if some combo strictly longer than `completed_len` still matches everything
+ * currently pending, meaning a shorter fully-pressed combo should not fire yet. */
+static bool has_longer_viable_candidate(uint8_t completed_len,
+                                        const struct zmk_runtime_combo_global_settings *global,
+                                        int64_t timestamp) {
+    uint8_t highest_active_layer = zmk_keymap_highest_layer_active();
+    uint32_t combo_count = zmk_runtime_combo_count();
+
+    for (uint32_t i = 0; i < combo_count; i++) {
+        struct zmk_runtime_combo_config combo;
+        if (read_enabled_combo(i, &combo) < 0 || combo.key_position_len <= completed_len) {
+            continue;
+        }
+        if (!combo_active_on_layer(&combo, highest_active_layer) ||
+            is_quick_tap(&combo, global, timestamp)) {
+            continue;
+        }
+        if (combo_matches_pending(&combo, global, timestamp)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static int release_pending_keys(void) {
@@ -503,7 +644,25 @@ static int release_pending_keys(void) {
 static void cleanup_pending(void) {
     k_work_cancel_delayable(&timeout_task);
     timeout_task_timeout_at = 0;
+    fully_pressed_combo_idx = -1;
     release_pending_keys();
+}
+
+/* Fire the combo remembered as fully pressed (if any), replaying any pending keys
+ * beyond its own positions as regular key events. Returns false if none was stored. */
+static bool fire_fully_pressed_combo(void) {
+    if (fully_pressed_combo_idx < 0) {
+        return false;
+    }
+    uint32_t combo_idx = fully_pressed_combo_idx;
+    fully_pressed_combo_idx = -1;
+
+    struct zmk_runtime_combo_config combo;
+    if (zmk_runtime_combo_read(combo_idx, &combo) < 0 || combo.key_position_len > pending_count) {
+        return false;
+    }
+    finish_pending_and_activate(combo_idx, &combo);
+    return true;
 }
 
 static void update_timeout_task(void) {
@@ -514,18 +673,22 @@ static void update_timeout_task(void) {
     }
 
     int64_t timeout_at = LLONG_MAX;
-    uint16_t timeout_ms = current_global_settings().timeout_ms;
+    struct zmk_runtime_combo_global_settings global = current_global_settings();
     uint32_t combo_count = zmk_runtime_combo_count();
     for (uint32_t i = 0; i < combo_count; i++) {
         struct zmk_runtime_combo_config combo;
-        if (read_enabled_combo(i, &combo) < 0 || !combo_matches_pending(&combo, k_uptime_get())) {
+        if (read_enabled_combo(i, &combo) < 0 ||
+            !combo_matches_pending(&combo, &global, k_uptime_get())) {
             continue;
         }
+        uint16_t timeout_ms = effective_timeout_ms(&combo, &global);
         timeout_at = MIN(timeout_at, pending_keys[0].data.timestamp + timeout_ms);
     }
 
     if (timeout_at == LLONG_MAX) {
-        cleanup_pending();
+        if (!fire_fully_pressed_combo()) {
+            cleanup_pending();
+        }
         return;
     }
     if (timeout_task_timeout_at != timeout_at &&
@@ -559,7 +722,7 @@ static int release_combo_behavior(uint32_t combo_idx, const struct zmk_runtime_c
     return zmk_behavior_invoke_binding(&combo->behavior, event, false);
 }
 
-static struct runtime_combo_active *store_active_combo(uint32_t combo_idx) {
+static struct runtime_combo_active *store_active_combo(uint32_t combo_idx, uint8_t count) {
     if (active_combo_count >= CONFIG_ZMK_COMBO_MAX_PRESSED_COMBOS) {
         LOG_WRN("Unable to store runtime combo; active combo limit reached");
         return NULL;
@@ -567,31 +730,64 @@ static struct runtime_combo_active *store_active_combo(uint32_t combo_idx) {
 
     struct runtime_combo_active *active = &active_combos[active_combo_count++];
     *active = (struct runtime_combo_active){.combo_idx = combo_idx};
-    for (uint8_t i = 0; i < pending_count; i++) {
+    for (uint8_t i = 0; i < count; i++) {
         active->key_positions_pressed[i] = pending_keys[i];
     }
-    active->key_positions_pressed_count = pending_count;
+    active->key_positions_pressed_count = count;
     return active;
 }
 
 static int activate_combo(uint32_t combo_idx, const struct zmk_runtime_combo_config *combo) {
-    struct runtime_combo_active *active = store_active_combo(combo_idx);
+    struct runtime_combo_active *active = store_active_combo(combo_idx, pending_count);
     if (!active) {
         cleanup_pending();
         return ZMK_EV_EVENT_CAPTURED;
     }
     pending_count = 0;
+    fully_pressed_combo_idx = -1;
     k_work_cancel_delayable(&timeout_task);
     timeout_task_timeout_at = 0;
     press_combo_behavior(combo_idx, combo, active->key_positions_pressed[0].data.timestamp);
     return ZMK_EV_EVENT_CAPTURED;
 }
 
-static int find_complete_combo(struct zmk_runtime_combo_config *combo) {
+/* Fire `combo` (whose positions are the first `combo->key_position_len` pending keys)
+ * and replay any remaining pending keys as regular key events, since they were
+ * captured while a longer candidate looked viable but ended up unused. */
+static void finish_pending_and_activate(uint32_t combo_idx,
+                                        const struct zmk_runtime_combo_config *combo) {
+    uint8_t combo_len = combo->key_position_len;
+    uint8_t leftover_count = pending_count - combo_len;
+    struct zmk_position_state_changed_event
+        leftover[CONFIG_ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO];
+    for (uint8_t i = 0; i < leftover_count; i++) {
+        leftover[i] = pending_keys[combo_len + i];
+    }
+
+    struct runtime_combo_active *active = store_active_combo(combo_idx, combo_len);
+    pending_count = 0;
+    k_work_cancel_delayable(&timeout_task);
+    timeout_task_timeout_at = 0;
+
+    if (active) {
+        press_combo_behavior(combo_idx, combo, active->key_positions_pressed[0].data.timestamp);
+    }
+
+    for (uint8_t i = 0; i < leftover_count; i++) {
+        if (i == 0) {
+            ZMK_EVENT_RELEASE(leftover[i]);
+        } else {
+            ZMK_EVENT_RAISE(leftover[i]);
+        }
+    }
+}
+
+static int find_complete_combo(struct zmk_runtime_combo_config *combo,
+                               const struct zmk_runtime_combo_global_settings *global) {
     uint32_t combo_count = zmk_runtime_combo_count();
     for (uint32_t i = 0; i < combo_count; i++) {
         if (read_enabled_combo(i, combo) < 0 || combo->key_position_len != pending_count ||
-            !combo_matches_pending(combo, pending_keys[pending_count - 1].data.timestamp)) {
+            !combo_matches_pending(combo, global, pending_keys[pending_count - 1].data.timestamp)) {
             continue;
         }
         return i;
@@ -602,6 +798,9 @@ static int find_complete_combo(struct zmk_runtime_combo_config *combo) {
 static int position_state_down(struct zmk_position_state_changed *data) {
     int candidates = count_candidates_for_position(data->position, data->timestamp);
     if (candidates == 0) {
+        if (fire_fully_pressed_combo()) {
+            return position_state_down(data);
+        }
         if (pending_count > 0) {
             cleanup_pending();
         }
@@ -615,9 +814,15 @@ static int position_state_down(struct zmk_position_state_changed *data) {
 
     pending_keys[pending_count++] = copy_raised_zmk_position_state_changed(data);
 
+    struct zmk_runtime_combo_global_settings global = current_global_settings();
     struct zmk_runtime_combo_config combo;
-    int complete_combo = find_complete_combo(&combo);
+    int complete_combo = find_complete_combo(&combo, &global);
     if (complete_combo >= 0) {
+        if (has_longer_viable_candidate(combo.key_position_len, &global, data->timestamp)) {
+            fully_pressed_combo_idx = complete_combo;
+            update_timeout_task();
+            return ZMK_EV_EVENT_CAPTURED;
+        }
         return activate_combo(complete_combo, &combo);
     }
 
@@ -661,7 +866,8 @@ static bool release_combo_key(int32_t position, int64_t timestamp) {
         }
 
         active->key_positions_pressed_count--;
-        bool slow_release = current_global_settings().slow_release;
+        struct zmk_runtime_combo_global_settings global = current_global_settings();
+        bool slow_release = effective_slow_release(&combo, &global);
         if ((slow_release && all_keys_released) || (!slow_release && all_keys_pressed)) {
             release_combo_behavior(active->combo_idx, &combo, timestamp);
         }
@@ -674,7 +880,7 @@ static bool release_combo_key(int32_t position, int64_t timestamp) {
 }
 
 static int position_state_up(struct zmk_position_state_changed *data) {
-    if (pending_count > 0) {
+    if (pending_count > 0 && !fire_fully_pressed_combo()) {
         cleanup_pending();
     }
     if (release_combo_key(data->position, data->timestamp)) {
@@ -686,7 +892,9 @@ static int position_state_up(struct zmk_position_state_changed *data) {
 static void combo_timeout_handler(struct k_work *item) {
     ARG_UNUSED(item);
     if (timeout_task_timeout_at != 0 && k_uptime_get() >= timeout_task_timeout_at) {
-        cleanup_pending();
+        if (!fire_fully_pressed_combo()) {
+            cleanup_pending();
+        }
     }
 }
 
@@ -715,6 +923,62 @@ static int runtime_combo_test_setup(void) {
     int ret = zmk_runtime_combo_write(0, &combo, false);
     if (ret < 0) {
         LOG_ERR("Runtime combo test setup failed: %d", ret);
+        return ret;
+    }
+
+    /* Subset of combo 2 below; used to exercise overlap resolution. */
+    struct zmk_runtime_combo_config overlap_subset = {
+        .enabled = true,
+        .key_position_len = 2,
+        .behavior = {.behavior_dev = key_press, .param1 = C},
+        .key_positions = {2, 3},
+    };
+    ret = zmk_runtime_combo_write(1, &overlap_subset, false);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo overlap subset setup failed: %d", ret);
+        return ret;
+    }
+
+    /* Strict superset of combo 1 above; the longer combo should always win. */
+    struct zmk_runtime_combo_config overlap_superset = {
+        .enabled = true,
+        .key_position_len = 3,
+        .behavior = {.behavior_dev = key_press, .param1 = D},
+        .key_positions = {2, 3, 4},
+    };
+    ret = zmk_runtime_combo_write(2, &overlap_superset, false);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo overlap superset setup failed: %d", ret);
+        return ret;
+    }
+
+    /* Requires a full second of prior idle time; used to exercise the
+     * per-combo require-prior-idle override (global default is disabled). */
+    struct zmk_runtime_combo_config idle_guarded = {
+        .enabled = true,
+        .key_position_len = 2,
+        .behavior = {.behavior_dev = key_press, .param1 = E},
+        .key_positions = {5, 6},
+        .require_prior_idle_ms = 1000,
+    };
+    ret = zmk_runtime_combo_write(3, &idle_guarded, false);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo idle-guarded setup failed: %d", ret);
+        return ret;
+    }
+
+    /* Longer timeout than the global default; used to exercise the per-combo
+     * timeout override. */
+    struct zmk_runtime_combo_config long_timeout = {
+        .enabled = true,
+        .key_position_len = 2,
+        .behavior = {.behavior_dev = key_press, .param1 = F},
+        .key_positions = {7, 8},
+        .timeout_ms = 1000,
+    };
+    ret = zmk_runtime_combo_write(4, &long_timeout, false);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo long-timeout setup failed: %d", ret);
         return ret;
     }
 

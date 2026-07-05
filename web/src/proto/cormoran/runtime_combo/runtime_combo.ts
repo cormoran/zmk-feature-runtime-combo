@@ -9,6 +9,23 @@ import { BinaryReader, BinaryWriter } from "@bufbuild/protobuf/wire";
 
 export const protobufPackage = "cormoran.runtime_combo";
 
+/** Tri-state override for the global slow-release setting. */
+export const SlowReleaseOverride = {
+  SLOW_RELEASE_OVERRIDE_INHERIT: 0,
+  SLOW_RELEASE_OVERRIDE_ON: 1,
+  SLOW_RELEASE_OVERRIDE_OFF: 2,
+  UNRECOGNIZED: -1,
+} as const;
+
+export type SlowReleaseOverride = typeof SlowReleaseOverride[keyof typeof SlowReleaseOverride];
+
+export namespace SlowReleaseOverride {
+  export type SLOW_RELEASE_OVERRIDE_INHERIT = typeof SlowReleaseOverride.SLOW_RELEASE_OVERRIDE_INHERIT;
+  export type SLOW_RELEASE_OVERRIDE_ON = typeof SlowReleaseOverride.SLOW_RELEASE_OVERRIDE_ON;
+  export type SLOW_RELEASE_OVERRIDE_OFF = typeof SlowReleaseOverride.SLOW_RELEASE_OVERRIDE_OFF;
+  export type UNRECOGNIZED = typeof SlowReleaseOverride.UNRECOGNIZED;
+}
+
 export interface BehaviorBinding {
   behaviorId: number;
   param1: number;
@@ -22,12 +39,19 @@ export interface Combo {
   behavior: BehaviorBinding | undefined;
   layerMask: number;
   enabled: boolean;
+  /** 0 means inherit the global timeout. */
+  timeoutMs: number;
+  /** 0 means inherit the global require-prior-idle setting. */
+  requirePriorIdleMs: number;
+  slowReleaseOverride: SlowReleaseOverride;
 }
 
 export interface GlobalSettings {
   timeoutMs: number;
   slowRelease: boolean;
   maxCombo: number;
+  /** 0 disables the require-prior-idle guard. */
+  requirePriorIdleMs: number;
 }
 
 export interface ListCombosRequest {
@@ -44,6 +68,11 @@ export interface SetComboRequest {
   layerMask: number;
   enabled: boolean;
   persist: boolean;
+  /** 0 means inherit the global timeout. */
+  timeoutMs: number;
+  /** 0 means inherit the global require-prior-idle setting. */
+  requirePriorIdleMs: number;
+  slowReleaseOverride: SlowReleaseOverride;
 }
 
 export interface SetComboNameRequest {
@@ -70,6 +99,11 @@ export interface SetSlowReleaseRequest {
   persist: boolean;
 }
 
+export interface SetRequirePriorIdleMsRequest {
+  requirePriorIdleMs: number;
+  persist: boolean;
+}
+
 export interface SaveRequest {
 }
 
@@ -87,6 +121,7 @@ export interface Request {
   setSlowRelease?: SetSlowReleaseRequest | undefined;
   save?: SaveRequest | undefined;
   discard?: DiscardRequest | undefined;
+  setRequirePriorIdleMs?: SetRequirePriorIdleMsRequest | undefined;
 }
 
 export interface ListCombosResponse {
@@ -189,7 +224,17 @@ export const BehaviorBinding: MessageFns<BehaviorBinding> = {
 };
 
 function createBaseCombo(): Combo {
-  return { index: 0, name: "", keyPositions: [], behavior: undefined, layerMask: 0, enabled: false };
+  return {
+    index: 0,
+    name: "",
+    keyPositions: [],
+    behavior: undefined,
+    layerMask: 0,
+    enabled: false,
+    timeoutMs: 0,
+    requirePriorIdleMs: 0,
+    slowReleaseOverride: 0,
+  };
 }
 
 export const Combo: MessageFns<Combo> = {
@@ -213,6 +258,15 @@ export const Combo: MessageFns<Combo> = {
     }
     if (message.enabled !== false) {
       writer.uint32(64).bool(message.enabled);
+    }
+    if (message.timeoutMs !== 0) {
+      writer.uint32(72).uint32(message.timeoutMs);
+    }
+    if (message.requirePriorIdleMs !== 0) {
+      writer.uint32(80).uint32(message.requirePriorIdleMs);
+    }
+    if (message.slowReleaseOverride !== 0) {
+      writer.uint32(88).int32(message.slowReleaseOverride);
     }
     return writer;
   },
@@ -282,6 +336,30 @@ export const Combo: MessageFns<Combo> = {
           message.enabled = reader.bool();
           continue;
         }
+        case 9: {
+          if (tag !== 72) {
+            break;
+          }
+
+          message.timeoutMs = reader.uint32();
+          continue;
+        }
+        case 10: {
+          if (tag !== 80) {
+            break;
+          }
+
+          message.requirePriorIdleMs = reader.uint32();
+          continue;
+        }
+        case 11: {
+          if (tag !== 88) {
+            break;
+          }
+
+          message.slowReleaseOverride = reader.int32() as any;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -304,12 +382,15 @@ export const Combo: MessageFns<Combo> = {
       : undefined;
     message.layerMask = object.layerMask ?? 0;
     message.enabled = object.enabled ?? false;
+    message.timeoutMs = object.timeoutMs ?? 0;
+    message.requirePriorIdleMs = object.requirePriorIdleMs ?? 0;
+    message.slowReleaseOverride = object.slowReleaseOverride ?? 0;
     return message;
   },
 };
 
 function createBaseGlobalSettings(): GlobalSettings {
-  return { timeoutMs: 0, slowRelease: false, maxCombo: 0 };
+  return { timeoutMs: 0, slowRelease: false, maxCombo: 0, requirePriorIdleMs: 0 };
 }
 
 export const GlobalSettings: MessageFns<GlobalSettings> = {
@@ -322,6 +403,9 @@ export const GlobalSettings: MessageFns<GlobalSettings> = {
     }
     if (message.maxCombo !== 0) {
       writer.uint32(24).uint32(message.maxCombo);
+    }
+    if (message.requirePriorIdleMs !== 0) {
+      writer.uint32(32).uint32(message.requirePriorIdleMs);
     }
     return writer;
   },
@@ -357,6 +441,14 @@ export const GlobalSettings: MessageFns<GlobalSettings> = {
           message.maxCombo = reader.uint32();
           continue;
         }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.requirePriorIdleMs = reader.uint32();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -374,6 +466,7 @@ export const GlobalSettings: MessageFns<GlobalSettings> = {
     message.timeoutMs = object.timeoutMs ?? 0;
     message.slowRelease = object.slowRelease ?? false;
     message.maxCombo = object.maxCombo ?? 0;
+    message.requirePriorIdleMs = object.requirePriorIdleMs ?? 0;
     return message;
   },
 };
@@ -459,7 +552,17 @@ export const GetComboRequest: MessageFns<GetComboRequest> = {
 };
 
 function createBaseSetComboRequest(): SetComboRequest {
-  return { index: 0, keyPositions: [], behavior: undefined, layerMask: 0, enabled: false, persist: false };
+  return {
+    index: 0,
+    keyPositions: [],
+    behavior: undefined,
+    layerMask: 0,
+    enabled: false,
+    persist: false,
+    timeoutMs: 0,
+    requirePriorIdleMs: 0,
+    slowReleaseOverride: 0,
+  };
 }
 
 export const SetComboRequest: MessageFns<SetComboRequest> = {
@@ -483,6 +586,15 @@ export const SetComboRequest: MessageFns<SetComboRequest> = {
     }
     if (message.persist !== false) {
       writer.uint32(64).bool(message.persist);
+    }
+    if (message.timeoutMs !== 0) {
+      writer.uint32(72).uint32(message.timeoutMs);
+    }
+    if (message.requirePriorIdleMs !== 0) {
+      writer.uint32(80).uint32(message.requirePriorIdleMs);
+    }
+    if (message.slowReleaseOverride !== 0) {
+      writer.uint32(88).int32(message.slowReleaseOverride);
     }
     return writer;
   },
@@ -552,6 +664,30 @@ export const SetComboRequest: MessageFns<SetComboRequest> = {
           message.persist = reader.bool();
           continue;
         }
+        case 9: {
+          if (tag !== 72) {
+            break;
+          }
+
+          message.timeoutMs = reader.uint32();
+          continue;
+        }
+        case 10: {
+          if (tag !== 80) {
+            break;
+          }
+
+          message.requirePriorIdleMs = reader.uint32();
+          continue;
+        }
+        case 11: {
+          if (tag !== 88) {
+            break;
+          }
+
+          message.slowReleaseOverride = reader.int32() as any;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -574,6 +710,9 @@ export const SetComboRequest: MessageFns<SetComboRequest> = {
     message.layerMask = object.layerMask ?? 0;
     message.enabled = object.enabled ?? false;
     message.persist = object.persist ?? false;
+    message.timeoutMs = object.timeoutMs ?? 0;
+    message.requirePriorIdleMs = object.requirePriorIdleMs ?? 0;
+    message.slowReleaseOverride = object.slowReleaseOverride ?? 0;
     return message;
   },
 };
@@ -856,6 +995,64 @@ export const SetSlowReleaseRequest: MessageFns<SetSlowReleaseRequest> = {
   },
 };
 
+function createBaseSetRequirePriorIdleMsRequest(): SetRequirePriorIdleMsRequest {
+  return { requirePriorIdleMs: 0, persist: false };
+}
+
+export const SetRequirePriorIdleMsRequest: MessageFns<SetRequirePriorIdleMsRequest> = {
+  encode(message: SetRequirePriorIdleMsRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.requirePriorIdleMs !== 0) {
+      writer.uint32(8).uint32(message.requirePriorIdleMs);
+    }
+    if (message.persist !== false) {
+      writer.uint32(16).bool(message.persist);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): SetRequirePriorIdleMsRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseSetRequirePriorIdleMsRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.requirePriorIdleMs = reader.uint32();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.persist = reader.bool();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<SetRequirePriorIdleMsRequest>): SetRequirePriorIdleMsRequest {
+    return SetRequirePriorIdleMsRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<SetRequirePriorIdleMsRequest>): SetRequirePriorIdleMsRequest {
+    const message = createBaseSetRequirePriorIdleMsRequest();
+    message.requirePriorIdleMs = object.requirePriorIdleMs ?? 0;
+    message.persist = object.persist ?? false;
+    return message;
+  },
+};
+
 function createBaseSaveRequest(): SaveRequest {
   return {};
 }
@@ -936,6 +1133,7 @@ function createBaseRequest(): Request {
     setSlowRelease: undefined,
     save: undefined,
     discard: undefined,
+    setRequirePriorIdleMs: undefined,
   };
 }
 
@@ -970,6 +1168,9 @@ export const Request: MessageFns<Request> = {
     }
     if (message.discard !== undefined) {
       DiscardRequest.encode(message.discard, writer.uint32(82).fork()).join();
+    }
+    if (message.setRequirePriorIdleMs !== undefined) {
+      SetRequirePriorIdleMsRequest.encode(message.setRequirePriorIdleMs, writer.uint32(90).fork()).join();
     }
     return writer;
   },
@@ -1061,6 +1262,14 @@ export const Request: MessageFns<Request> = {
           message.discard = DiscardRequest.decode(reader, reader.uint32());
           continue;
         }
+        case 11: {
+          if (tag !== 90) {
+            break;
+          }
+
+          message.setRequirePriorIdleMs = SetRequirePriorIdleMsRequest.decode(reader, reader.uint32());
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1105,6 +1314,10 @@ export const Request: MessageFns<Request> = {
     message.discard = (object.discard !== undefined && object.discard !== null)
       ? DiscardRequest.fromPartial(object.discard)
       : undefined;
+    message.setRequirePriorIdleMs =
+      (object.setRequirePriorIdleMs !== undefined && object.setRequirePriorIdleMs !== null)
+        ? SetRequirePriorIdleMsRequest.fromPartial(object.setRequirePriorIdleMs)
+        : undefined;
     return message;
   },
 };

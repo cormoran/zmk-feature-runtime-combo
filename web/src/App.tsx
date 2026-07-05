@@ -9,6 +9,7 @@ import {
 import {
   Request,
   Response,
+  SlowReleaseOverride,
 } from "./proto/cormoran/runtime_combo/runtime_combo";
 import type {
   Combo,
@@ -27,12 +28,18 @@ type ComboDraft = {
   layerMask: string;
   enabled: boolean;
   persist: boolean;
+  // 0 means inherit the global timeout.
+  timeoutMs: number;
+  // 0 means inherit the global require-prior-idle setting.
+  requirePriorIdleMs: number;
+  slowReleaseOverride: SlowReleaseOverride;
 };
 
 type GlobalSettingsDraft = {
   timeoutMs: number;
   slowRelease: boolean;
   maxCombo: number;
+  requirePriorIdleMs: number;
   persist: boolean;
 };
 
@@ -46,12 +53,16 @@ const emptyDraft: ComboDraft = {
   layerMask: "0",
   enabled: true,
   persist: false,
+  timeoutMs: 0,
+  requirePriorIdleMs: 0,
+  slowReleaseOverride: SlowReleaseOverride.SLOW_RELEASE_OVERRIDE_INHERIT,
 };
 
 const emptyGlobalSettings: GlobalSettingsDraft = {
   timeoutMs: 50,
   slowRelease: false,
   maxCombo: 0,
+  requirePriorIdleMs: 0,
   persist: false,
 };
 
@@ -156,6 +167,7 @@ export function RPCTestSection() {
           timeoutMs: settings.timeoutMs || 50,
           slowRelease: settings.slowRelease,
           maxCombo: settings.maxCombo,
+          requirePriorIdleMs: settings.requirePriorIdleMs,
           persist: false,
         });
       } else if (resp?.error) {
@@ -200,6 +212,9 @@ export function RPCTestSection() {
       layerMask: `0x${(combo.layerMask ?? 0).toString(16)}`,
       enabled: combo.enabled,
       persist: false,
+      timeoutMs: combo.timeoutMs,
+      requirePriorIdleMs: combo.requirePriorIdleMs,
+      slowReleaseOverride: combo.slowReleaseOverride,
     });
   };
 
@@ -233,6 +248,9 @@ export function RPCTestSection() {
             layerMask: parseLayerMask(),
             enabled: draft.enabled,
             persist: draft.persist,
+            timeoutMs: draft.timeoutMs,
+            requirePriorIdleMs: draft.requirePriorIdleMs,
+            slowReleaseOverride: draft.slowReleaseOverride,
           },
         })
       );
@@ -292,6 +310,27 @@ export function RPCTestSection() {
         })
       );
       setMessage(resp?.error?.message ?? "Slow release saved");
+      await refreshGlobalSettings();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RPC failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveRequirePriorIdleMs = async () => {
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const resp = await callRuntimeComboRPC(
+        Request.create({
+          setRequirePriorIdleMs: {
+            requirePriorIdleMs: globalSettings.requirePriorIdleMs,
+            persist: globalSettings.persist,
+          },
+        })
+      );
+      setMessage(resp?.error?.message ?? "Require prior idle saved");
       await refreshGlobalSettings();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "RPC failed");
@@ -431,6 +470,21 @@ export function RPCTestSection() {
               }
             />
           </label>
+          <label>
+            Require prior idle ms (0 disables)
+            <input
+              type="number"
+              min="0"
+              max="65535"
+              value={globalSettings.requirePriorIdleMs}
+              onChange={(event) =>
+                setGlobalSettings({
+                  ...globalSettings,
+                  requirePriorIdleMs: Number(event.target.value),
+                })
+              }
+            />
+          </label>
         </div>
 
         <div className="switches">
@@ -476,6 +530,13 @@ export function RPCTestSection() {
             onClick={saveSlowRelease}
           >
             Save Slow Release
+          </button>
+          <button
+            className="btn"
+            disabled={isLoading}
+            onClick={saveRequirePriorIdleMs}
+          >
+            Save Require Prior Idle
           </button>
         </div>
       </section>
@@ -554,6 +615,57 @@ export function RPCTestSection() {
                 setDraft({ ...draft, layerMask: event.target.value })
               }
             />
+          </label>
+          <label>
+            Timeout ms (0 = inherit global)
+            <input
+              type="number"
+              min="0"
+              max="65535"
+              value={draft.timeoutMs}
+              onChange={(event) =>
+                setDraft({ ...draft, timeoutMs: Number(event.target.value) })
+              }
+            />
+          </label>
+          <label>
+            Require prior idle ms (0 = inherit global)
+            <input
+              type="number"
+              min="0"
+              max="65535"
+              value={draft.requirePriorIdleMs}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  requirePriorIdleMs: Number(event.target.value),
+                })
+              }
+            />
+          </label>
+          <label>
+            Slow release
+            <select
+              value={draft.slowReleaseOverride}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  slowReleaseOverride: Number(
+                    event.target.value
+                  ) as SlowReleaseOverride,
+                })
+              }
+            >
+              <option value={SlowReleaseOverride.SLOW_RELEASE_OVERRIDE_INHERIT}>
+                Inherit global
+              </option>
+              <option value={SlowReleaseOverride.SLOW_RELEASE_OVERRIDE_ON}>
+                On
+              </option>
+              <option value={SlowReleaseOverride.SLOW_RELEASE_OVERRIDE_OFF}>
+                Off
+              </option>
+            </select>
           </label>
         </div>
 

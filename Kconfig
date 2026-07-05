@@ -29,6 +29,15 @@ config ZMK_RUNTIME_COMBO_DEFAULT_TIMEOUT_MS
     default 50
     range 1 65535
 
+config ZMK_RUNTIME_COMBO_DEFAULT_REQUIRE_PRIOR_IDLE_MS
+    int "Default runtime combo require-prior-idle time"
+    default 0
+    range 0 65535
+    help
+      A combo's positions are ignored if a non-modifier key was tapped within
+      this many milliseconds before the combo's first key press. 0 disables
+      this guard.
+
 config ZMK_RUNTIME_COMBO_TEST
     bool "Enable runtime combo self-test setup"
 
