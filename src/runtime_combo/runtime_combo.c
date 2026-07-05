@@ -133,6 +133,10 @@ static const struct zmk_custom_setting_constraint
                    .max = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32, .int32_value = 65535}}},
 };
 
+static const struct zmk_custom_setting_value runtime_combo_require_prior_idle_ms_default_value = {
+    .type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
+    .int32_value = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_REQUIRE_PRIOR_IDLE_MS};
+
 STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_require_prior_idle_ms) = {
     .custom_subsystem_id = ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
     .key = ZMK_RUNTIME_COMBO_REQUIRE_PRIOR_IDLE_MS_KEY,
@@ -143,8 +147,8 @@ STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_require_prior_idle_ms)
     .write_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
     .constraints = runtime_combo_require_prior_idle_ms_constraints,
     .constraints_count = ARRAY_SIZE(runtime_combo_require_prior_idle_ms_constraints),
-    .default_value = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
-                      .int32_value = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_REQUIRE_PRIOR_IDLE_MS},
+    .default_value = &runtime_combo_require_prior_idle_ms_default_value,
+    .temp_slot = -1,
 };
 
 /* Compile-time defaults from an optional `cormoran,runtime-combo-defaults` node. */
