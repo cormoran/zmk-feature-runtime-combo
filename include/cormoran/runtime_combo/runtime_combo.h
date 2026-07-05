@@ -74,3 +74,11 @@ bool zmk_runtime_combo_has_override(uint32_t index);
 /* Erase a stored runtime override, restoring the compile-time default (or an
  * empty slot, if there is none). */
 int zmk_runtime_combo_reset(uint32_t index);
+
+/* Rebuild the internal decoded-combo cache used by the key-event matching
+ * path. Call after any operation that may change combo or global-setting
+ * data outside zmk_runtime_combo_write()/delete()/reset() and the
+ * write_*() global setting setters, which already keep the cache in sync
+ * themselves (e.g. after zmk_custom_settings_save_scope() or
+ * zmk_custom_settings_discard_scope() on this module's subsystem). */
+void zmk_runtime_combo_invalidate_cache(void);

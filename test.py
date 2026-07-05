@@ -65,7 +65,7 @@ class WestCommandsTests(unittest.TestCase):
         platform.system() == "Linux", "zmk-test is only supported on Linux"
     )
     def test_zmk_test(self):
-        for test_case in ("test", "studio", "overrides", "defaults"):
+        for test_case in ("test", "studio", "overrides", "defaults", "discard"):
             test_build_dir = self.BUILD_DIR / THIS_DIR.name / test_case
             shutil.rmtree(test_build_dir, ignore_errors=True)
 

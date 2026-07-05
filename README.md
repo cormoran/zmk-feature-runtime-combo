@@ -22,9 +22,12 @@ stored by numeric slot internally and can also have a display name for the Web U
   runtime combos, with per-combo overrides for all three.
 - Native-parity overlap resolution: if one combo's positions are a subset of
   another enabled combo's positions, the longer combo always wins.
+- Up to 63 combo slots, decoded into a RAM cache so the key-event hot path
+  never touches the settings registry.
 - Name and combo arrays stored through
   [zmk-feature-custom-settings](https://github.com/cormoran/zmk-feature-custom-settings).
-- React Web UI for listing and editing combo slots.
+- React Web UI for listing and editing combo slots, with a clickable layout
+  for picking positions and a searchable behavior list.
 
 ## Storage Format
 
@@ -139,9 +142,12 @@ candidate never completes.
 4. Connect to the keyboard, choose a slot, and set:
 
    - Name: display name only.
-   - Positions: comma-separated key positions, such as `0, 1`.
-   - Behavior ID, Param 1, Param 2: the same binding fields ZMK Studio uses.
+   - Behavior: pick by name from the connected firmware's behavior list (falls
+     back to a raw numeric id until the list loads).
+   - Param 1, Param 2: the same binding fields ZMK Studio uses.
    - Layer mask: `0` means all layers.
+   - Positions: click keys on the rendered layout below the form to toggle
+     them in or out of the combo.
    - Timeout ms / Require prior idle ms: `0` inherits the corresponding global
      setting; a nonzero value overrides it for this combo only.
    - Slow release: `Inherit global` follows the Global Settings panel; `On`/`Off`
