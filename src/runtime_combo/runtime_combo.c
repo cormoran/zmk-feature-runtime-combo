@@ -44,6 +44,7 @@ BUILD_ASSERT(RUNTIME_COMBO_PACKED_MAX_SIZE <= CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_M
 #define RUNTIME_COMBO_ARRAY_ELEMENT_DEFINE(_name, _key, _index, _value_type, _default_value)       \
     static const struct zmk_custom_setting_constraint _name##_constraints[] = {                    \
         ZMK_CUSTOM_SETTING_NO_CONSTRAINT};                                                         \
+    static const struct zmk_custom_setting_value _name##_default_static = _default_value;          \
     STRUCT_SECTION_ITERABLE(zmk_custom_setting, _name) = {                                         \
         .custom_subsystem_id = ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,                                     \
         .key = _key "/" ZMK_CUSTOM_SETTINGS_STRINGIFY(_index),                                     \
@@ -59,7 +60,8 @@ BUILD_ASSERT(RUNTIME_COMBO_PACKED_MAX_SIZE <= CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_M
         .write_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,                                \
         .constraints = _name##_constraints,                                                        \
         .constraints_count = ARRAY_SIZE(_name##_constraints),                                      \
-        .default_value = _default_value,                                                           \
+        .default_value = &_name##_default_static,                                                  \
+        .temp_slot = -1,                                                                           \
     }
 
 #define RUNTIME_COMBO_DEFINE_COMBO_SETTING(n, _)                                                   \
@@ -81,6 +83,10 @@ static const struct zmk_custom_setting_constraint runtime_combo_timeout_ms_const
                .max = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32, .int32_value = 65535}}},
 };
 
+static const struct zmk_custom_setting_value runtime_combo_timeout_ms_default_value = {
+    .type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
+    .int32_value = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_TIMEOUT_MS};
+
 STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_timeout_ms) = {
     .custom_subsystem_id = ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
     .key = ZMK_RUNTIME_COMBO_TIMEOUT_MS_KEY,
@@ -91,13 +97,16 @@ STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_timeout_ms) = {
     .write_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
     .constraints = runtime_combo_timeout_ms_constraints,
     .constraints_count = ARRAY_SIZE(runtime_combo_timeout_ms_constraints),
-    .default_value = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
-                      .int32_value = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_TIMEOUT_MS},
+    .default_value = &runtime_combo_timeout_ms_default_value,
+    .temp_slot = -1,
 };
 
 static const struct zmk_custom_setting_constraint runtime_combo_slow_release_constraints[] = {
     {.type = ZMK_CUSTOM_SETTING_CONSTRAINT_NONE},
 };
+
+static const struct zmk_custom_setting_value runtime_combo_slow_release_default_value = {
+    .type = ZMK_CUSTOM_SETTING_VALUE_TYPE_BOOL, .bool_value = false};
 
 STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_slow_release) = {
     .custom_subsystem_id = ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
@@ -109,7 +118,8 @@ STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_slow_release) = {
     .write_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
     .constraints = runtime_combo_slow_release_constraints,
     .constraints_count = ARRAY_SIZE(runtime_combo_slow_release_constraints),
-    .default_value = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_BOOL, .bool_value = false},
+    .default_value = &runtime_combo_slow_release_default_value,
+    .temp_slot = -1,
 };
 
 struct runtime_combo_active {
