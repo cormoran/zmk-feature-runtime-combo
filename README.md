@@ -114,9 +114,15 @@ candidate never completes.
          remote: cormoran
          revision: main
          import: true
+       - name: zmk
+         remote: cormoran
+         revision: main+custom-studio-protocol
+         import:
+           file: app/west.yml
    ```
 
-   This module imports `zmk-feature-custom-settings`.
+   This module imports `zmk-feature-custom-settings`. The custom Studio RPC Web
+   UI requires ZMK from cormoran's `main+custom-studio-protocol` branch.
 
 2. Enable the feature in `config/<shield>.conf`.
 
