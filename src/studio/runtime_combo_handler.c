@@ -47,6 +47,30 @@ static void set_errno_error(cormoran_runtime_combo_Response *resp, const char *o
     resp->response_type.error = error;
 }
 
+static cormoran_runtime_combo_SlowReleaseOverride
+slow_release_override_to_proto(enum zmk_runtime_combo_slow_release_override value) {
+    switch (value) {
+    case ZMK_RUNTIME_COMBO_SLOW_RELEASE_ON:
+        return cormoran_runtime_combo_SlowReleaseOverride_SLOW_RELEASE_OVERRIDE_ON;
+    case ZMK_RUNTIME_COMBO_SLOW_RELEASE_OFF:
+        return cormoran_runtime_combo_SlowReleaseOverride_SLOW_RELEASE_OVERRIDE_OFF;
+    default:
+        return cormoran_runtime_combo_SlowReleaseOverride_SLOW_RELEASE_OVERRIDE_INHERIT;
+    }
+}
+
+static enum zmk_runtime_combo_slow_release_override
+slow_release_override_from_proto(cormoran_runtime_combo_SlowReleaseOverride value) {
+    switch (value) {
+    case cormoran_runtime_combo_SlowReleaseOverride_SLOW_RELEASE_OVERRIDE_ON:
+        return ZMK_RUNTIME_COMBO_SLOW_RELEASE_ON;
+    case cormoran_runtime_combo_SlowReleaseOverride_SLOW_RELEASE_OVERRIDE_OFF:
+        return ZMK_RUNTIME_COMBO_SLOW_RELEASE_OFF;
+    default:
+        return ZMK_RUNTIME_COMBO_SLOW_RELEASE_INHERIT;
+    }
+}
+
 static int fill_combo_message(uint32_t index, cormoran_runtime_combo_Combo *message) {
     struct zmk_runtime_combo_config combo;
     int ret = zmk_runtime_combo_read(index, &combo);
@@ -62,6 +86,9 @@ static int fill_combo_message(uint32_t index, cormoran_runtime_combo_Combo *mess
     for (uint8_t i = 0; i < combo.key_position_len; i++) {
         message->key_positions[i] = combo.key_positions[i];
     }
+    message->timeout_ms = combo.timeout_ms;
+    message->require_prior_idle_ms = combo.require_prior_idle_ms;
+    message->slow_release_override = slow_release_override_to_proto(combo.slow_release_override);
 
     zmk_runtime_combo_read_name(index, message->name, sizeof(message->name));
 
@@ -115,7 +142,8 @@ static int request_to_combo(const cormoran_runtime_combo_SetComboRequest *req,
                             struct zmk_runtime_combo_config *combo) {
     if (req->index >= zmk_runtime_combo_max_count() || req->key_positions_count < 2 ||
         req->key_positions_count > CONFIG_ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO ||
-        !req->has_behavior || req->behavior.behavior_id > UINT16_MAX) {
+        !req->has_behavior || req->behavior.behavior_id > UINT16_MAX ||
+        req->timeout_ms > UINT16_MAX || req->require_prior_idle_ms > UINT16_MAX) {
         return -EINVAL;
     }
 
@@ -135,6 +163,9 @@ static int request_to_combo(const cormoran_runtime_combo_SetComboRequest *req,
                 .param1 = req->behavior.param1,
                 .param2 = req->behavior.param2,
             },
+        .timeout_ms = req->timeout_ms,
+        .require_prior_idle_ms = req->require_prior_idle_ms,
+        .slow_release_override = slow_release_override_from_proto(req->slow_release_override),
     };
 
     for (uint8_t i = 0; i < req->key_positions_count; i++) {
@@ -159,6 +190,7 @@ static int handle_get_global_settings(cormoran_runtime_combo_Response *resp) {
     result.settings.timeout_ms = settings.timeout_ms;
     result.settings.slow_release = settings.slow_release;
     result.settings.max_combo = settings.max_combo;
+    result.settings.require_prior_idle_ms = settings.require_prior_idle_ms;
 
     resp->which_response_type = cormoran_runtime_combo_Response_get_global_settings_tag;
     resp->response_type.get_global_settings = result;
@@ -239,6 +271,23 @@ static int handle_set_slow_release(const cormoran_runtime_combo_SetSlowReleaseRe
     return 0;
 }
 
+static int
+handle_set_require_prior_idle_ms(const cormoran_runtime_combo_SetRequirePriorIdleMsRequest *req,
+                                 cormoran_runtime_combo_Response *resp) {
+    if (req->require_prior_idle_ms > UINT16_MAX) {
+        return -EINVAL;
+    }
+
+    int ret = zmk_runtime_combo_write_require_prior_idle_ms((uint16_t)req->require_prior_idle_ms,
+                                                            req->persist);
+    if (ret < 0) {
+        return ret;
+    }
+
+    set_status(resp, "Runtime combo require-prior-idle written", 1);
+    return 0;
+}
+
 static int handle_save(cormoran_runtime_combo_Response *resp) {
     uint32_t affected_count = 0;
     int ret =
@@ -309,6 +358,9 @@ static bool runtime_combo_rpc_handle_request(const zmk_custom_CallRequest *raw_r
         break;
     case cormoran_runtime_combo_Request_discard_tag:
         ret = handle_discard(resp);
+        break;
+    case cormoran_runtime_combo_Request_set_require_prior_idle_ms_tag:
+        ret = handle_set_require_prior_idle_ms(&req.request_type.set_require_prior_idle_ms, resp);
         break;
     default:
         ret = -ENOTSUP;
