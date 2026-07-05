@@ -13,6 +13,8 @@ stored by numeric slot internally and can also have a display name for the Web U
 ## Features
 
 - Runtime editable combo slots.
+- Compile-time default combos declared in the `.keymap`, active immediately
+  after flashing and restorable after a runtime edit.
 - Separate RPC methods for combo content and combo names to keep request payloads
   small.
 - Compact binary storage for combo bodies.
@@ -46,6 +48,43 @@ slots configured in the firmware.
 Records written by older module versions (storage version 2, without the
 per-combo override fields) are still read correctly; they behave as if every
 override is left at "inherit".
+
+## Compile-Time Default Combos
+
+Default combos can be declared directly in the `.keymap` using a
+`cormoran,runtime-combo-defaults` node, so they work immediately after
+flashing and survive a settings erase:
+
+```dts
+/ {
+    runtime_combo_defaults {
+        compatible = "cormoran,runtime-combo-defaults";
+
+        combo_esc {
+            slot = <0>;             // optional; defaults to definition order
+            key-positions = <0 1>;
+            bindings = <&kp ESC>;
+            layers = <0 1>;         // optional; omitted = all layers
+            display-name = "Esc";   // optional; defaults to the node name
+            timeout-ms = <30>;      // optional per-combo override
+            require-prior-idle-ms = <125>; // optional per-combo override
+            slow-release;           // optional; forces slow-release on
+        };
+    };
+};
+```
+
+A slot's effective value follows this order:
+
+1. **Runtime override** — if the slot has ever been written or explicitly
+   disabled through the RPC, that value always wins (a disabled/deleted slot
+   suppresses its default rather than falling back to it).
+2. **Compile-time default** — used whenever the slot has no stored override.
+3. **Empty** — a slot with neither a default nor a stored value.
+
+The Web UI shows each slot's source (`Default`, `Overridden`, `Runtime`, or
+`Empty`) as a badge, and a slot with a default shows a **Reset to Default**
+button that erases the stored override and restores the compile-time values.
 
 ## Overlap Resolution
 

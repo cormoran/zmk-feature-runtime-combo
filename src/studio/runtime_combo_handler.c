@@ -71,6 +71,21 @@ slow_release_override_from_proto(cormoran_runtime_combo_SlowReleaseOverride valu
     }
 }
 
+static cormoran_runtime_combo_ComboSource combo_source(uint32_t index) {
+    bool has_default = zmk_runtime_combo_has_default(index);
+    bool has_override = zmk_runtime_combo_has_override(index);
+    if (has_default && has_override) {
+        return cormoran_runtime_combo_ComboSource_COMBO_SOURCE_OVERRIDDEN;
+    }
+    if (has_default) {
+        return cormoran_runtime_combo_ComboSource_COMBO_SOURCE_DEFAULT;
+    }
+    if (has_override) {
+        return cormoran_runtime_combo_ComboSource_COMBO_SOURCE_RUNTIME;
+    }
+    return cormoran_runtime_combo_ComboSource_COMBO_SOURCE_EMPTY;
+}
+
 static int fill_combo_message(uint32_t index, cormoran_runtime_combo_Combo *message) {
     struct zmk_runtime_combo_config combo;
     int ret = zmk_runtime_combo_read(index, &combo);
@@ -89,6 +104,7 @@ static int fill_combo_message(uint32_t index, cormoran_runtime_combo_Combo *mess
     message->timeout_ms = combo.timeout_ms;
     message->require_prior_idle_ms = combo.require_prior_idle_ms;
     message->slow_release_override = slow_release_override_to_proto(combo.slow_release_override);
+    message->source = combo_source(index);
 
     zmk_runtime_combo_read_name(index, message->name, sizeof(message->name));
 
@@ -288,6 +304,17 @@ handle_set_require_prior_idle_ms(const cormoran_runtime_combo_SetRequirePriorIdl
     return 0;
 }
 
+static int handle_reset_combo(const cormoran_runtime_combo_ResetComboRequest *req,
+                              cormoran_runtime_combo_Response *resp) {
+    int ret = zmk_runtime_combo_reset(req->index);
+    if (ret < 0) {
+        return ret;
+    }
+
+    set_status(resp, "Combo reset to default", 1);
+    return 0;
+}
+
 static int handle_save(cormoran_runtime_combo_Response *resp) {
     uint32_t affected_count = 0;
     int ret =
@@ -361,6 +388,9 @@ static bool runtime_combo_rpc_handle_request(const zmk_custom_CallRequest *raw_r
         break;
     case cormoran_runtime_combo_Request_set_require_prior_idle_ms_tag:
         ret = handle_set_require_prior_idle_ms(&req.request_type.set_require_prior_idle_ms, resp);
+        break;
+    case cormoran_runtime_combo_Request_reset_combo_tag:
+        ret = handle_reset_combo(&req.request_type.reset_combo, resp);
         break;
     default:
         ret = -ENOTSUP;

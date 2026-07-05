@@ -71,7 +71,7 @@
 
 .combo-row {
   display: grid;
-  grid-template-columns: 44px 1fr auto;
+  grid-template-columns: 44px 1fr auto auto;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -88,6 +88,16 @@
 .combo-row.disabled {
   color: #747b87;
   background: #f3f4f6;
+}
+
+.badge {
+  border: 1px solid #c7cfdb;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.78rem;
+  color: #374151;
+  background: #eef2f7;
+  white-space: nowrap;
 }
 
 .editor h2,
@@ -167,7 +177,8 @@ input {
     grid-template-columns: 40px 1fr;
   }
 
-  .combo-row span:last-child {
+  .combo-row span:nth-child(3),
+  .combo-row span:nth-child(4) {
     grid-column: 2;
   }
 }
