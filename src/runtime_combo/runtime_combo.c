@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <zephyr/devicetree.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -146,6 +147,81 @@ STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_require_prior_idle_ms)
                       .int32_value = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_REQUIRE_PRIOR_IDLE_MS},
 };
 
+/* Compile-time defaults from an optional `cormoran,runtime-combo-defaults` node. */
+struct zmk_runtime_combo_default {
+    uint32_t slot;
+    const char *name;
+    struct zmk_runtime_combo_config config;
+};
+
+#define DT_DRV_COMPAT cormoran_runtime_combo_defaults
+
+/* ARRAY_SIZE()-based RUNTIME_COMBO_DEFAULT_COUNT below uses sizeof, so it
+ * cannot be used in `#if`; this preprocessor-evaluable flag can. */
+#define RUNTIME_COMBO_HAS_DEFAULTS DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
+
+#if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
+
+#define RUNTIME_COMBO_DEFAULT_PROP_BIT_AT_IDX(n, prop, idx) BIT(DT_PROP_BY_IDX(n, prop, idx))
+#define RUNTIME_COMBO_DEFAULT_LAYER_MASK(n)                                                        \
+    COND_CODE_1(DT_NODE_HAS_PROP(n, layers),                                                       \
+                (DT_FOREACH_PROP_ELEM_SEP(n, layers, RUNTIME_COMBO_DEFAULT_PROP_BIT_AT_IDX, (|))), \
+                (0))
+
+#define RUNTIME_COMBO_DEFAULT_SLOW_RELEASE(n)                                                      \
+    (DT_PROP(n, slow_release) ? ZMK_RUNTIME_COMBO_SLOW_RELEASE_ON                                  \
+                              : ZMK_RUNTIME_COMBO_SLOW_RELEASE_INHERIT)
+
+#define RUNTIME_COMBO_DEFAULT_VALIDATE(n)                                                          \
+    BUILD_ASSERT(DT_PROP_LEN(n, key_positions) >= 2,                                               \
+                 "runtime combo default must have at least two key positions");                    \
+    BUILD_ASSERT(DT_PROP_LEN(n, key_positions) <=                                                  \
+                     CONFIG_ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO,                             \
+                 "runtime combo default has too many key positions");                              \
+    BUILD_ASSERT(DT_PROP_OR(n, slot, DT_NODE_CHILD_IDX(n)) < CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS,  \
+                 "runtime combo default slot is out of range");
+
+DT_INST_FOREACH_CHILD(0, RUNTIME_COMBO_DEFAULT_VALIDATE)
+
+#define RUNTIME_COMBO_DEFAULT_INST(n)                                                              \
+    {                                                                                              \
+        .slot = DT_PROP_OR(n, slot, DT_NODE_CHILD_IDX(n)),                                         \
+        .name = DT_PROP_OR(n, display_name, DT_NODE_FULL_NAME(n)),                                 \
+        .config =                                                                                  \
+            {                                                                                      \
+                .enabled = true,                                                                   \
+                .key_position_len = DT_PROP_LEN(n, key_positions),                                 \
+                .layer_mask = RUNTIME_COMBO_DEFAULT_LAYER_MASK(n),                                 \
+                .behavior = ZMK_KEYMAP_EXTRACT_BINDING(0, n),                                      \
+                .timeout_ms = DT_PROP_OR(n, timeout_ms, 0),                                        \
+                .require_prior_idle_ms = DT_PROP_OR(n, require_prior_idle_ms, 0),                  \
+                .slow_release_override = RUNTIME_COMBO_DEFAULT_SLOW_RELEASE(n),                    \
+                .key_positions = DT_PROP(n, key_positions),                                        \
+            },                                                                                     \
+    },
+
+static const struct zmk_runtime_combo_default runtime_combo_defaults[] = {
+    DT_INST_FOREACH_CHILD(0, RUNTIME_COMBO_DEFAULT_INST)};
+
+#define RUNTIME_COMBO_DEFAULT_COUNT ARRAY_SIZE(runtime_combo_defaults)
+
+#else
+
+static const struct zmk_runtime_combo_default runtime_combo_defaults[1];
+
+#define RUNTIME_COMBO_DEFAULT_COUNT 0
+
+#endif
+
+static const struct zmk_runtime_combo_default *runtime_combo_find_default(uint32_t index) {
+    for (size_t i = 0; i < RUNTIME_COMBO_DEFAULT_COUNT; i++) {
+        if (runtime_combo_defaults[i].slot == index) {
+            return &runtime_combo_defaults[i];
+        }
+    }
+    return NULL;
+}
+
 struct runtime_combo_active {
     uint16_t combo_idx;
     uint8_t key_positions_pressed_count;
@@ -184,13 +260,42 @@ static const struct zmk_custom_setting *name_setting(uint32_t index) {
                                                  ZMK_RUNTIME_COMBO_NAMES_KEY, index);
 }
 
+static uint32_t runtime_combo_default_upper_bound(void) {
+    uint32_t upper_bound = 0;
+    for (size_t i = 0; i < RUNTIME_COMBO_DEFAULT_COUNT; i++) {
+        upper_bound = MAX(upper_bound, runtime_combo_defaults[i].slot + 1);
+    }
+    return upper_bound;
+}
+
 uint32_t zmk_runtime_combo_count(void) {
     const struct zmk_custom_setting *setting =
         zmk_custom_setting_find_array(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, ZMK_RUNTIME_COMBO_COMBOS_KEY);
-    return setting ? zmk_custom_setting_array_size(setting) : 0;
+    uint32_t array_size = setting ? zmk_custom_setting_array_size(setting) : 0;
+    /* Slots covered only by a compile-time default may never have grown the
+     * underlying custom-settings array, but must still be matched/listed. */
+    return MAX(array_size, runtime_combo_default_upper_bound());
 }
 
 uint32_t zmk_runtime_combo_max_count(void) { return CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS; }
+
+uint32_t zmk_runtime_combo_default_count(void) { return RUNTIME_COMBO_DEFAULT_COUNT; }
+
+bool zmk_runtime_combo_has_default(uint32_t index) {
+    return runtime_combo_find_default(index) != NULL;
+}
+
+int zmk_runtime_combo_read_default(uint32_t index, struct zmk_runtime_combo_config *combo) {
+    if (!combo) {
+        return -EINVAL;
+    }
+    const struct zmk_runtime_combo_default *def = runtime_combo_find_default(index);
+    if (!def) {
+        return -ENOENT;
+    }
+    *combo = def->config;
+    return 0;
+}
 
 static int packed_to_combo(const struct zmk_custom_setting_value *value,
                            struct zmk_runtime_combo_config *combo) {
@@ -323,7 +428,24 @@ int zmk_runtime_combo_read(uint32_t index, struct zmk_runtime_combo_config *comb
     int ret = zmk_custom_setting_read_array_by_key(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
                                                    ZMK_RUNTIME_COMBO_COMBOS_KEY, index, &value);
     if (ret < 0) {
+        /* -ENOENT also covers "within array_max_size but the array hasn't
+         * grown this far yet", which is indistinguishable from an explicit
+         * empty value as far as the default fallback is concerned. */
+        if (ret == -ENOENT) {
+            const struct zmk_runtime_combo_default *def = runtime_combo_find_default(index);
+            if (def) {
+                *combo = def->config;
+                return 0;
+            }
+        }
         return ret;
+    }
+    if (value.type == ZMK_CUSTOM_SETTING_VALUE_TYPE_BYTES && value.size == 0) {
+        const struct zmk_runtime_combo_default *def = runtime_combo_find_default(index);
+        if (def) {
+            *combo = def->config;
+            return 0;
+        }
     }
     return packed_to_combo(&value, combo);
 }
@@ -337,11 +459,27 @@ int zmk_runtime_combo_read_name(uint32_t index, char *name, size_t name_size) {
     int ret = zmk_custom_setting_read_array_by_key(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
                                                    ZMK_RUNTIME_COMBO_NAMES_KEY, index, &value);
     if (ret < 0) {
+        if (ret == -ENOENT) {
+            const struct zmk_runtime_combo_default *def = runtime_combo_find_default(index);
+            if (def) {
+                strncpy(name, def->name, name_size - 1);
+                name[name_size - 1] = '\0';
+                return 0;
+            }
+        }
         name[0] = '\0';
         return ret;
     }
     if (value.type != ZMK_CUSTOM_SETTING_VALUE_TYPE_STRING) {
         return -EINVAL;
+    }
+    if (value.string_value[0] == '\0') {
+        const struct zmk_runtime_combo_default *def = runtime_combo_find_default(index);
+        if (def) {
+            strncpy(name, def->name, name_size - 1);
+            name[name_size - 1] = '\0';
+            return 0;
+        }
     }
     strncpy(name, value.string_value, name_size - 1);
     name[name_size - 1] = '\0';
@@ -492,6 +630,48 @@ int zmk_runtime_combo_delete(uint32_t index, bool persist) {
     }
     combo.enabled = false;
     return zmk_runtime_combo_write(index, &combo, persist);
+}
+
+bool zmk_runtime_combo_has_override(uint32_t index) {
+    if (index >= CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS) {
+        return false;
+    }
+    struct zmk_custom_setting_value value;
+    int ret = zmk_custom_setting_read_array_by_key(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+                                                   ZMK_RUNTIME_COMBO_COMBOS_KEY, index, &value);
+    return ret == 0 && value.size > 0;
+}
+
+int zmk_runtime_combo_reset(uint32_t index) {
+    if (index >= CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS) {
+        return -EINVAL;
+    }
+
+    /* zmk_custom_setting_reset() restores default_array_size, which is
+     * shared by the whole array (not per-element): calling it here would
+     * shrink every other combo's visible array_size back to 0. Persisting an
+     * explicit empty value at just this index is observably identical to an
+     * unset slot for zmk_runtime_combo_read()'s fallback, without that
+     * side effect. */
+    const struct zmk_custom_setting *setting = combo_setting(index);
+    if (!setting) {
+        return -ENOENT;
+    }
+    uint32_t array_size = MAX(zmk_custom_setting_array_size(setting), index + 1);
+    int ret = zmk_custom_setting_write_array_element(
+        setting, &RUNTIME_COMBO_EMPTY_BYTES, array_size, ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST);
+    if (ret < 0) {
+        return ret;
+    }
+
+    const struct zmk_custom_setting *name = name_setting(index);
+    if (name) {
+        uint32_t name_array_size = MAX(zmk_custom_setting_array_size(name), index + 1);
+        zmk_custom_setting_write_array_element(name, &ZMK_CUSTOM_SETTING_VALUE_STRING(""),
+                                               name_array_size,
+                                               ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST);
+    }
+    return 0;
 }
 
 static bool combo_contains_position(const struct zmk_runtime_combo_config *combo,
@@ -926,6 +1106,12 @@ static int runtime_combo_test_setup(void) {
         return ret;
     }
 
+#if !RUNTIME_COMBO_HAS_DEFAULTS
+    /* Slots 1-4 exercise overlap resolution and per-combo overrides (see
+     * tests/overrides). Skipped when a cormoran,runtime-combo-defaults node
+     * is compiled in, since that fixture (tests/defaults) reuses these slot
+     * numbers to exercise the default/override/reset paths instead. */
+
     /* Subset of combo 2 below; used to exercise overlap resolution. */
     struct zmk_runtime_combo_config overlap_subset = {
         .enabled = true,
@@ -981,6 +1167,41 @@ static int runtime_combo_test_setup(void) {
         LOG_ERR("Runtime combo long-timeout setup failed: %d", ret);
         return ret;
     }
+#else
+    /* Exercises the DT-default read-path fallback (see tests/defaults):
+     * slot 1's default is left untouched, slot 2's is tombstoned, slot 3's
+     * is overridden to a different behavior, and slot 4's is tombstoned then
+     * restored via reset. Slot numbers and positions must match that
+     * fixture's cormoran,runtime-combo-defaults node. */
+    ret = zmk_runtime_combo_delete(2, false);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo default tombstone setup failed: %d", ret);
+        return ret;
+    }
+
+    struct zmk_runtime_combo_config default_override = {
+        .enabled = true,
+        .key_position_len = 2,
+        .behavior = {.behavior_dev = key_press, .param1 = J},
+        .key_positions = {6, 7},
+    };
+    ret = zmk_runtime_combo_write(3, &default_override, false);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo default override setup failed: %d", ret);
+        return ret;
+    }
+
+    ret = zmk_runtime_combo_delete(4, false);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo default reset setup (delete) failed: %d", ret);
+        return ret;
+    }
+    ret = zmk_runtime_combo_reset(4);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo default reset setup (reset) failed: %d", ret);
+        return ret;
+    }
+#endif
 
     runtime_combo_test_setup_done = true;
     LOG_INF("PASS: runtime_combo_test_setup");

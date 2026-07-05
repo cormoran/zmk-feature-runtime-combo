@@ -7,6 +7,7 @@ import {
   ZMKAppContext,
 } from "@cormoran/zmk-studio-react-hook";
 import {
+  ComboSource,
   Request,
   Response,
   SlowReleaseOverride,
@@ -33,6 +34,7 @@ type ComboDraft = {
   // 0 means inherit the global require-prior-idle setting.
   requirePriorIdleMs: number;
   slowReleaseOverride: SlowReleaseOverride;
+  source: ComboSource;
 };
 
 type GlobalSettingsDraft = {
@@ -56,6 +58,15 @@ const emptyDraft: ComboDraft = {
   timeoutMs: 0,
   requirePriorIdleMs: 0,
   slowReleaseOverride: SlowReleaseOverride.SLOW_RELEASE_OVERRIDE_INHERIT,
+  source: ComboSource.COMBO_SOURCE_EMPTY,
+};
+
+const COMBO_SOURCE_LABELS: Record<ComboSource, string> = {
+  [ComboSource.COMBO_SOURCE_EMPTY]: "Empty",
+  [ComboSource.COMBO_SOURCE_DEFAULT]: "Default",
+  [ComboSource.COMBO_SOURCE_OVERRIDDEN]: "Overridden",
+  [ComboSource.COMBO_SOURCE_RUNTIME]: "Runtime",
+  [ComboSource.UNRECOGNIZED]: "Unknown",
 };
 
 const emptyGlobalSettings: GlobalSettingsDraft = {
@@ -215,6 +226,7 @@ export function RPCTestSection() {
       timeoutMs: combo.timeoutMs,
       requirePriorIdleMs: combo.requirePriorIdleMs,
       slowReleaseOverride: combo.slowReleaseOverride,
+      source: combo.source,
     });
   };
 
@@ -357,6 +369,22 @@ export function RPCTestSection() {
     }
   };
 
+  const resetCombo = async () => {
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const resp = await callRuntimeComboRPC(
+        Request.create({ resetCombo: { index: draft.index } })
+      );
+      setMessage(resp?.error?.message ?? "Combo reset to default");
+      await refreshCombos();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RPC failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const applyPendingSettings = async (action: "save" | "discard") => {
     setIsLoading(true);
     setMessage(null);
@@ -430,6 +458,7 @@ export function RPCTestSection() {
               <span>#{combo.index}</span>
               <strong>{combo.name || "Unnamed combo"}</strong>
               <span>{combo.keyPositions.join(" + ") || "No positions"}</span>
+              <span className="badge">{COMBO_SOURCE_LABELS[combo.source]}</span>
             </button>
           ))}
         </div>
@@ -542,7 +571,10 @@ export function RPCTestSection() {
       </section>
 
       <section className="panel editor">
-        <h2>Combo Editor</h2>
+        <div className="section-heading">
+          <h2>Combo Editor</h2>
+          <span className="badge">{COMBO_SOURCE_LABELS[draft.source]}</span>
+        </div>
         <div className="form-grid">
           <label>
             Slot
@@ -703,6 +735,12 @@ export function RPCTestSection() {
           <button className="btn" disabled={isLoading} onClick={disableCombo}>
             Disable
           </button>
+          {(draft.source === ComboSource.COMBO_SOURCE_DEFAULT ||
+            draft.source === ComboSource.COMBO_SOURCE_OVERRIDDEN) && (
+            <button className="btn" disabled={isLoading} onClick={resetCombo}>
+              Reset to Default
+            </button>
+          )}
         </div>
 
         {message && <p className="message">{message}</p>}

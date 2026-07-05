@@ -59,3 +59,18 @@ int zmk_runtime_combo_write_timeout_ms(uint16_t timeout_ms, bool persist);
 int zmk_runtime_combo_write_slow_release(bool slow_release, bool persist);
 int zmk_runtime_combo_write_require_prior_idle_ms(uint16_t require_prior_idle_ms, bool persist);
 int zmk_runtime_combo_delete(uint32_t index, bool persist);
+
+/* Number of combo slots with a compile-time default (0 if the
+ * cormoran,runtime-combo-defaults devicetree node is absent). */
+uint32_t zmk_runtime_combo_default_count(void);
+/* Read the compile-time default for a slot. Returns -ENOENT if the slot has
+ * no default, regardless of any stored runtime value. */
+int zmk_runtime_combo_read_default(uint32_t index, struct zmk_runtime_combo_config *combo);
+/* True if the slot has a compile-time default. */
+bool zmk_runtime_combo_has_default(uint32_t index);
+/* True if the slot has a stored runtime value (set or explicitly deleted),
+ * regardless of whether it also has a compile-time default. */
+bool zmk_runtime_combo_has_override(uint32_t index);
+/* Erase a stored runtime override, restoring the compile-time default (or an
+ * empty slot, if there is none). */
+int zmk_runtime_combo_reset(uint32_t index);
