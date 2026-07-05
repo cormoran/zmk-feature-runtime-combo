@@ -5,15 +5,82 @@ import {
 } from "@cormoran/zmk-studio-react-hook/testing";
 import { call_rpc } from "@zmkfirmware/zmk-studio-ts-client";
 import { RPCTestSection, SUBSYSTEM_IDENTIFIER } from "../src/App";
-import { Response } from "../src/proto/cormoran/runtime_combo/runtime_combo";
+import {
+  Request,
+  Response,
+} from "../src/proto/cormoran/runtime_combo/runtime_combo";
 
 jest.mock("@zmkfirmware/zmk-studio-ts-client", () => ({
   call_rpc: jest.fn(),
 }));
 
+// Dispatches by request shape (custom subsystem vs. core keymap/behaviors
+// RPCs) instead of call order, since RPCTestSection now issues core RPCs
+// (position layout, behavior list) concurrently with its own custom RPCs.
+function mockCallRpc(customResponses: {
+  listCombos?: unknown;
+  getGlobalSettings?: unknown;
+}) {
+  (call_rpc as jest.Mock).mockImplementation(
+    async (
+      _connection: unknown,
+      req: {
+        custom?: { call: { payload: Uint8Array } };
+        keymap?: unknown;
+        behaviors?: unknown;
+      }
+    ) => {
+      if (req.keymap) {
+        return {
+          keymap: {
+            getPhysicalLayouts: { activeLayoutIndex: 0, layouts: [] },
+          },
+        };
+      }
+      if (req.behaviors) {
+        return { behaviors: { listAllBehaviors: { behaviors: [] } } };
+      }
+      if (req.custom) {
+        const decoded = Request.decode(req.custom.call.payload);
+        if (decoded.listCombos && customResponses.listCombos) {
+          return {
+            custom: {
+              call: {
+                payload: Response.encode(
+                  Response.create({
+                    listCombos: customResponses.listCombos,
+                  })
+                ).finish(),
+              },
+            },
+          };
+        }
+        if (decoded.getGlobalSettings && customResponses.getGlobalSettings) {
+          return {
+            custom: {
+              call: {
+                payload: Response.encode(
+                  Response.create({
+                    getGlobalSettings: customResponses.getGlobalSettings,
+                  })
+                ).finish(),
+              },
+            },
+          };
+        }
+      }
+      return undefined;
+    }
+  );
+}
+
 describe("RPCTestSection Component", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockCallRpc({
+      listCombos: { combos: [] },
+      getGlobalSettings: { settings: {} },
+    });
   });
 
   describe("With Subsystem", () => {
@@ -35,11 +102,11 @@ describe("RPCTestSection Component", () => {
       expect(
         screen.getByRole("heading", { name: /Combo Editor/i })
       ).toBeInTheDocument();
-      expect(screen.getByLabelText(/Positions/i)).toBeInTheDocument();
+      expect(screen.getByText(/^Positions:/i)).toBeInTheDocument();
       expect(screen.getByText(/Save Combo/i)).toBeInTheDocument();
     });
 
-    it("should show default input value", () => {
+    it("should show default position selection", () => {
       const mockZMKApp = createConnectedMockZMKApp({
         subsystems: [SUBSYSTEM_IDENTIFIER],
       });
@@ -50,41 +117,23 @@ describe("RPCTestSection Component", () => {
         </ZMKAppProvider>
       );
 
-      const input = screen.getByLabelText(/Positions/i) as HTMLInputElement;
-      expect(input.value).toBe("0, 1");
+      expect(screen.getByText(/^Positions:\s*0 \+ 1/i)).toBeInTheDocument();
     });
 
     it("should show max combo count from global settings", async () => {
       const mockZMKApp = createConnectedMockZMKApp({
         subsystems: [SUBSYSTEM_IDENTIFIER],
       });
-      (call_rpc as jest.Mock)
-        .mockResolvedValueOnce({
-          custom: {
-            call: {
-              payload: Response.encode(
-                Response.create({ listCombos: { combos: [] } })
-              ).finish(),
-            },
+      mockCallRpc({
+        listCombos: { combos: [] },
+        getGlobalSettings: {
+          settings: {
+            timeoutMs: 75,
+            slowRelease: true,
+            maxCombo: 12,
           },
-        })
-        .mockResolvedValueOnce({
-          custom: {
-            call: {
-              payload: Response.encode(
-                Response.create({
-                  getGlobalSettings: {
-                    settings: {
-                      timeoutMs: 75,
-                      slowRelease: true,
-                      maxCombo: 12,
-                    },
-                  },
-                })
-              ).finish(),
-            },
-          },
-        });
+        },
+      });
 
       render(
         <ZMKAppProvider value={mockZMKApp}>

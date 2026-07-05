@@ -319,6 +319,12 @@ static int handle_save(cormoran_runtime_combo_Response *resp) {
     uint32_t affected_count = 0;
     int ret =
         zmk_custom_settings_save_scope(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, NULL, NULL, &affected_count);
+    /* save_scope() doesn't itself change any in-memory value, but the
+     * decoded-combo cache is rebuilt here too for the same reason as
+     * discard: neither operation runs through
+     * zmk_runtime_combo_write()/reset(), so the cache would otherwise never
+     * learn about it. */
+    zmk_runtime_combo_invalidate_cache();
     if (ret < 0) {
         return ret;
     }
@@ -331,6 +337,7 @@ static int handle_discard(cormoran_runtime_combo_Response *resp) {
     uint32_t affected_count = 0;
     int ret = zmk_custom_settings_discard_scope(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, NULL, NULL,
                                                 &affected_count);
+    zmk_runtime_combo_invalidate_cache();
     if (ret < 0) {
         return ret;
     }

@@ -151,6 +151,41 @@ input {
   color: #b91c1c;
 }
 
+.position-picker-section {
+  margin: 16px 0;
+}
+
+.position-picker-section p {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+  color: #374151;
+}
+
+.position-picker {
+  position: relative;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.position-key {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #c7cfdb;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #1f2937;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.position-key.selected {
+  border-color: #166534;
+  background: #166534;
+  color: #fff;
+}
+
 .preview {
   margin-top: 18px;
 }

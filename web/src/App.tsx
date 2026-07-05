@@ -16,13 +16,15 @@ import type {
   Combo,
   GlobalSettings,
 } from "./proto/cormoran/runtime_combo/runtime_combo";
+import { usePhysicalLayoutKeys, useBehaviorOptions } from "./useStudioCore";
+import { PositionPicker, BehaviorSelect } from "./StudioCore";
 
 export const SUBSYSTEM_IDENTIFIER = "cormoran__runtime_combo";
 
 type ComboDraft = {
   index: number;
   name: string;
-  keyPositions: string;
+  keyPositions: number[];
   behaviorId: number;
   param1: number;
   param2: number;
@@ -48,7 +50,7 @@ type GlobalSettingsDraft = {
 const emptyDraft: ComboDraft = {
   index: 0,
   name: "",
-  keyPositions: "0, 1",
+  keyPositions: [0, 1],
   behaviorId: 0,
   param1: 0,
   param2: 0,
@@ -132,6 +134,8 @@ export function RPCTestSection() {
   const subsystem = zmkApp?.findSubsystem(SUBSYSTEM_IDENTIFIER);
   const connection = zmkApp?.state.connection;
   const subsystemIndex = subsystem?.index;
+  const physicalLayoutKeys = usePhysicalLayoutKeys(connection);
+  const behaviorOptions = useBehaviorOptions(connection);
 
   const callRuntimeComboRPC = useCallback(
     async (request: Request): Promise<Response | null> => {
@@ -216,7 +220,7 @@ export function RPCTestSection() {
     setDraft({
       index: combo.index,
       name: combo.name,
-      keyPositions: combo.keyPositions.join(", "),
+      keyPositions: [...combo.keyPositions],
       behaviorId: combo.behavior?.behaviorId ?? 0,
       param1: combo.behavior?.param1 ?? 0,
       param2: combo.behavior?.param2 ?? 0,
@@ -229,12 +233,6 @@ export function RPCTestSection() {
       source: combo.source,
     });
   };
-
-  const parsePositions = () =>
-    draft.keyPositions
-      .split(",")
-      .map((part) => Number.parseInt(part.trim(), 10))
-      .filter((value) => Number.isInteger(value) && value >= 0);
 
   const parseLayerMask = () => {
     const value = draft.layerMask.trim();
@@ -251,7 +249,7 @@ export function RPCTestSection() {
         Request.create({
           setCombo: {
             index: draft.index,
-            keyPositions: parsePositions(),
+            keyPositions: draft.keyPositions,
             behavior: {
               behaviorId: draft.behaviorId,
               param1: draft.param1,
@@ -598,23 +596,11 @@ export function RPCTestSection() {
             />
           </label>
           <label>
-            Positions
-            <input
-              value={draft.keyPositions}
-              onChange={(event) =>
-                setDraft({ ...draft, keyPositions: event.target.value })
-              }
-            />
-          </label>
-          <label>
-            Behavior ID
-            <input
-              type="number"
-              min="0"
+            Behavior
+            <BehaviorSelect
+              options={behaviorOptions}
               value={draft.behaviorId}
-              onChange={(event) =>
-                setDraft({ ...draft, behaviorId: Number(event.target.value) })
-              }
+              onChange={(behaviorId) => setDraft({ ...draft, behaviorId })}
             />
           </label>
           <label>
@@ -699,6 +685,20 @@ export function RPCTestSection() {
               </option>
             </select>
           </label>
+        </div>
+
+        <div className="position-picker-section">
+          <p>
+            Positions:{" "}
+            {draft.keyPositions.length > 0
+              ? draft.keyPositions.join(" + ")
+              : "none selected"}
+          </p>
+          <PositionPicker
+            keys={physicalLayoutKeys}
+            selected={draft.keyPositions}
+            onChange={(keyPositions) => setDraft({ ...draft, keyPositions })}
+          />
         </div>
 
         <div className="switches">

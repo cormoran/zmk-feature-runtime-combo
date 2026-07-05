@@ -212,6 +212,33 @@ static const struct zmk_runtime_combo_default *runtime_combo_find_default(uint32
     return NULL;
 }
 
+/* RAM cache of decoded, effective combos (after default fallback), so the
+ * key-event hot path never touches the custom-settings registry or the
+ * packed-byte decoder. `key_positions` is uint16_t here (not the oversized
+ * int32_t used by zmk_runtime_combo_config) since values are already
+ * range-checked on write. */
+struct runtime_combo_cache_entry {
+    bool valid;
+    bool enabled;
+    uint8_t key_position_len;
+    uint32_t layer_mask;
+    struct zmk_behavior_binding behavior;
+    uint16_t timeout_ms;
+    uint16_t require_prior_idle_ms;
+    enum zmk_runtime_combo_slow_release_override slow_release_override;
+    uint16_t key_positions[CONFIG_ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO];
+};
+
+static struct runtime_combo_cache_entry runtime_combo_cache[CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS];
+/* SYS_INIT runs before main() calls settings_load(), so an eager cache build
+ * at init would only ever see compile-time defaults. Instead the cache is
+ * built lazily on the first real position event, which is guaranteed to
+ * happen after settings_load() completes. */
+static bool runtime_combo_cache_ready;
+
+static struct zmk_runtime_combo_global_settings runtime_combo_global_cache;
+static bool runtime_combo_global_cache_valid;
+
 struct runtime_combo_active {
     uint16_t combo_idx;
     uint8_t key_positions_pressed_count;
@@ -476,6 +503,71 @@ int zmk_runtime_combo_read_name(uint32_t index, char *name, size_t name_size) {
     return 0;
 }
 
+static void runtime_combo_cache_rebuild_slot(uint32_t index) {
+    struct runtime_combo_cache_entry *entry = &runtime_combo_cache[index];
+    struct zmk_runtime_combo_config combo;
+    if (zmk_runtime_combo_read(index, &combo) < 0) {
+        *entry = (struct runtime_combo_cache_entry){.valid = false};
+        return;
+    }
+
+    *entry = (struct runtime_combo_cache_entry){
+        .valid = true,
+        .enabled = combo.enabled,
+        .key_position_len = combo.key_position_len,
+        .layer_mask = combo.layer_mask,
+        .behavior = combo.behavior,
+        .timeout_ms = combo.timeout_ms,
+        .require_prior_idle_ms = combo.require_prior_idle_ms,
+        .slow_release_override = combo.slow_release_override,
+    };
+    for (uint8_t i = 0; i < combo.key_position_len; i++) {
+        entry->key_positions[i] = (uint16_t)combo.key_positions[i];
+    }
+}
+
+static void runtime_combo_cache_rebuild_all(void) {
+    for (uint32_t i = 0; i < CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS; i++) {
+        runtime_combo_cache_rebuild_slot(i);
+    }
+}
+
+void zmk_runtime_combo_invalidate_cache(void) {
+    runtime_combo_cache_rebuild_all();
+    runtime_combo_global_cache_valid = false;
+    runtime_combo_cache_ready = true;
+}
+
+static void runtime_combo_cache_ensure_ready(void) {
+    if (!runtime_combo_cache_ready) {
+        zmk_runtime_combo_invalidate_cache();
+    }
+}
+
+static int runtime_combo_cache_read(uint32_t index, struct zmk_runtime_combo_config *combo) {
+    if (index >= CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS) {
+        return -EINVAL;
+    }
+    const struct runtime_combo_cache_entry *entry = &runtime_combo_cache[index];
+    if (!entry->valid) {
+        return -ENOENT;
+    }
+
+    *combo = (struct zmk_runtime_combo_config){
+        .enabled = entry->enabled,
+        .key_position_len = entry->key_position_len,
+        .layer_mask = entry->layer_mask,
+        .behavior = entry->behavior,
+        .timeout_ms = entry->timeout_ms,
+        .require_prior_idle_ms = entry->require_prior_idle_ms,
+        .slow_release_override = entry->slow_release_override,
+    };
+    for (uint8_t i = 0; i < entry->key_position_len; i++) {
+        combo->key_positions[i] = entry->key_positions[i];
+    }
+    return 0;
+}
+
 int zmk_runtime_combo_read_global_settings(struct zmk_runtime_combo_global_settings *settings) {
     if (!settings) {
         return -EINVAL;
@@ -556,17 +648,20 @@ int zmk_runtime_combo_write(uint32_t index, const struct zmk_runtime_combo_confi
     }
 
     uint32_t array_size = MAX(zmk_custom_setting_array_size(setting), index + 1);
-    ret = zmk_custom_setting_write_array_element(setting, &value, array_size,
-                                                 persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
-                                                         : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
-    if (ret < 0) {
-        return ret;
-    }
-    return ensure_name_array_size(index, persist);
+    int write_ret = zmk_custom_setting_write_array_element(
+        setting, &value, array_size,
+        persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
+    int name_ret = ensure_name_array_size(index, persist);
+    /* The in-memory value updates even if persisting to flash failed
+     * (zmk_custom_setting_write_array_element applies memory_value before
+     * attempting the flash save), so the cache must refresh regardless of
+     * either call's outcome. */
+    runtime_combo_cache_rebuild_slot(index);
+    return write_ret < 0 ? write_ret : name_ret;
 }
 
 int zmk_runtime_combo_write_name(uint32_t index, const char *name, bool persist) {
-    if (!name || index >= zmk_runtime_combo_count()) {
+    if (!name || index >= CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS) {
         return -EINVAL;
     }
     const struct zmk_custom_setting *setting = name_setting(index);
@@ -593,23 +688,32 @@ int zmk_runtime_combo_write_timeout_ms(uint16_t timeout_ms, bool persist) {
     }
 
     struct zmk_custom_setting_value value = ZMK_CUSTOM_SETTING_VALUE_INT32(timeout_ms);
-    return zmk_custom_setting_write_by_key(
+    int ret = zmk_custom_setting_write_by_key(
         ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, ZMK_RUNTIME_COMBO_TIMEOUT_MS_KEY, &value,
         persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
+    /* The in-memory value updates even if persisting to flash failed (see
+     * zmk_runtime_combo_write()), so the cache must invalidate regardless of
+     * this call's outcome. */
+    runtime_combo_global_cache_valid = false;
+    return ret;
 }
 
 int zmk_runtime_combo_write_slow_release(bool slow_release, bool persist) {
     struct zmk_custom_setting_value value = ZMK_CUSTOM_SETTING_VALUE_BOOL(slow_release);
-    return zmk_custom_setting_write_by_key(
+    int ret = zmk_custom_setting_write_by_key(
         ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, ZMK_RUNTIME_COMBO_SLOW_RELEASE_KEY, &value,
         persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
+    runtime_combo_global_cache_valid = false;
+    return ret;
 }
 
 int zmk_runtime_combo_write_require_prior_idle_ms(uint16_t require_prior_idle_ms, bool persist) {
     struct zmk_custom_setting_value value = ZMK_CUSTOM_SETTING_VALUE_INT32(require_prior_idle_ms);
-    return zmk_custom_setting_write_by_key(
+    int ret = zmk_custom_setting_write_by_key(
         ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, ZMK_RUNTIME_COMBO_REQUIRE_PRIOR_IDLE_MS_KEY, &value,
         persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
+    runtime_combo_global_cache_valid = false;
+    return ret;
 }
 
 int zmk_runtime_combo_delete(uint32_t index, bool persist) {
@@ -650,9 +754,6 @@ int zmk_runtime_combo_reset(uint32_t index) {
     uint32_t array_size = MAX(zmk_custom_setting_array_size(setting), index + 1);
     int ret = zmk_custom_setting_write_array_element(
         setting, &RUNTIME_COMBO_EMPTY_BYTES, array_size, ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST);
-    if (ret < 0) {
-        return ret;
-    }
 
     const struct zmk_custom_setting *name = name_setting(index);
     if (name) {
@@ -661,7 +762,11 @@ int zmk_runtime_combo_reset(uint32_t index) {
                                                name_array_size,
                                                ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST);
     }
-    return 0;
+    /* The in-memory value updates even if persisting to flash failed (see
+     * zmk_runtime_combo_write()), so the cache must refresh regardless of
+     * the write's outcome. */
+    runtime_combo_cache_rebuild_slot(index);
+    return ret;
 }
 
 static bool combo_contains_position(const struct zmk_runtime_combo_config *combo,
@@ -688,6 +793,14 @@ static struct zmk_runtime_combo_global_settings current_global_settings(void) {
         LOG_WRN("Using default runtime combo global settings");
     }
     return settings;
+}
+
+static struct zmk_runtime_combo_global_settings runtime_combo_cached_global_settings(void) {
+    if (!runtime_combo_global_cache_valid) {
+        runtime_combo_global_cache = current_global_settings();
+        runtime_combo_global_cache_valid = true;
+    }
+    return runtime_combo_global_cache;
 }
 
 static uint16_t effective_timeout_ms(const struct zmk_runtime_combo_config *combo,
@@ -744,7 +857,7 @@ static bool is_quick_tap(const struct zmk_runtime_combo_config *combo,
 }
 
 static int read_enabled_combo(uint32_t index, struct zmk_runtime_combo_config *combo) {
-    int ret = zmk_runtime_combo_read(index, combo);
+    int ret = runtime_combo_cache_read(index, combo);
     if (ret < 0 || !combo->enabled) {
         return ret < 0 ? ret : -ENOENT;
     }
@@ -754,10 +867,9 @@ static int read_enabled_combo(uint32_t index, struct zmk_runtime_combo_config *c
 static int count_candidates_for_position(int32_t position, int64_t timestamp) {
     int count = 0;
     uint8_t highest_active_layer = zmk_keymap_highest_layer_active();
-    uint32_t combo_count = zmk_runtime_combo_count();
-    struct zmk_runtime_combo_global_settings global = current_global_settings();
+    struct zmk_runtime_combo_global_settings global = runtime_combo_cached_global_settings();
 
-    for (uint32_t i = 0; i < combo_count; i++) {
+    for (uint32_t i = 0; i < CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS; i++) {
         struct zmk_runtime_combo_config combo;
         if (read_enabled_combo(i, &combo) < 0) {
             continue;
@@ -780,9 +892,8 @@ static bool has_longer_viable_candidate(uint8_t completed_len,
                                         const struct zmk_runtime_combo_global_settings *global,
                                         int64_t timestamp) {
     uint8_t highest_active_layer = zmk_keymap_highest_layer_active();
-    uint32_t combo_count = zmk_runtime_combo_count();
 
-    for (uint32_t i = 0; i < combo_count; i++) {
+    for (uint32_t i = 0; i < CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS; i++) {
         struct zmk_runtime_combo_config combo;
         if (read_enabled_combo(i, &combo) < 0 || combo.key_position_len <= completed_len) {
             continue;
@@ -828,7 +939,7 @@ static bool fire_fully_pressed_combo(void) {
     fully_pressed_combo_idx = -1;
 
     struct zmk_runtime_combo_config combo;
-    if (zmk_runtime_combo_read(combo_idx, &combo) < 0 || combo.key_position_len > pending_count) {
+    if (runtime_combo_cache_read(combo_idx, &combo) < 0 || combo.key_position_len > pending_count) {
         return false;
     }
     finish_pending_and_activate(combo_idx, &combo);
@@ -843,9 +954,8 @@ static void update_timeout_task(void) {
     }
 
     int64_t timeout_at = LLONG_MAX;
-    struct zmk_runtime_combo_global_settings global = current_global_settings();
-    uint32_t combo_count = zmk_runtime_combo_count();
-    for (uint32_t i = 0; i < combo_count; i++) {
+    struct zmk_runtime_combo_global_settings global = runtime_combo_cached_global_settings();
+    for (uint32_t i = 0; i < CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS; i++) {
         struct zmk_runtime_combo_config combo;
         if (read_enabled_combo(i, &combo) < 0 ||
             !combo_matches_pending(&combo, &global, k_uptime_get())) {
@@ -954,8 +1064,7 @@ static void finish_pending_and_activate(uint32_t combo_idx,
 
 static int find_complete_combo(struct zmk_runtime_combo_config *combo,
                                const struct zmk_runtime_combo_global_settings *global) {
-    uint32_t combo_count = zmk_runtime_combo_count();
-    for (uint32_t i = 0; i < combo_count; i++) {
+    for (uint32_t i = 0; i < CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS; i++) {
         if (read_enabled_combo(i, combo) < 0 || combo->key_position_len != pending_count ||
             !combo_matches_pending(combo, global, pending_keys[pending_count - 1].data.timestamp)) {
             continue;
@@ -984,7 +1093,7 @@ static int position_state_down(struct zmk_position_state_changed *data) {
 
     pending_keys[pending_count++] = copy_raised_zmk_position_state_changed(data);
 
-    struct zmk_runtime_combo_global_settings global = current_global_settings();
+    struct zmk_runtime_combo_global_settings global = runtime_combo_cached_global_settings();
     struct zmk_runtime_combo_config combo;
     int complete_combo = find_complete_combo(&combo, &global);
     if (complete_combo >= 0) {
@@ -1012,7 +1121,7 @@ static bool release_combo_key(int32_t position, int64_t timestamp) {
     for (uint8_t active_idx = 0; active_idx < active_combo_count; active_idx++) {
         struct runtime_combo_active *active = &active_combos[active_idx];
         struct zmk_runtime_combo_config combo;
-        if (zmk_runtime_combo_read(active->combo_idx, &combo) < 0) {
+        if (runtime_combo_cache_read(active->combo_idx, &combo) < 0) {
             deactivate_combo(active_idx);
             return true;
         }
@@ -1036,7 +1145,7 @@ static bool release_combo_key(int32_t position, int64_t timestamp) {
         }
 
         active->key_positions_pressed_count--;
-        struct zmk_runtime_combo_global_settings global = current_global_settings();
+        struct zmk_runtime_combo_global_settings global = runtime_combo_cached_global_settings();
         bool slow_release = effective_slow_release(&combo, &global);
         if ((slow_release && all_keys_released) || (!slow_release && all_keys_pressed)) {
             release_combo_behavior(active->combo_idx, &combo, timestamp);
@@ -1096,7 +1205,66 @@ static int runtime_combo_test_setup(void) {
         return ret;
     }
 
-#if !RUNTIME_COMBO_HAS_DEFAULTS
+#if RUNTIME_COMBO_HAS_DEFAULTS
+    /* Exercises the DT-default read-path fallback (see tests/defaults):
+     * slot 1's default is left untouched, slot 2's is tombstoned, slot 3's
+     * is overridden to a different behavior, and slot 4's is tombstoned then
+     * restored via reset. Slot numbers and positions must match that
+     * fixture's cormoran,runtime-combo-defaults node. */
+    ret = zmk_runtime_combo_delete(2, false);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo default tombstone setup failed: %d", ret);
+        return ret;
+    }
+
+    struct zmk_runtime_combo_config default_override = {
+        .enabled = true,
+        .key_position_len = 2,
+        .behavior = {.behavior_dev = key_press, .param1 = J},
+        .key_positions = {6, 7},
+    };
+    ret = zmk_runtime_combo_write(3, &default_override, false);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo default override setup failed: %d", ret);
+        return ret;
+    }
+
+    ret = zmk_runtime_combo_delete(4, false);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo default reset setup (delete) failed: %d", ret);
+        return ret;
+    }
+    ret = zmk_runtime_combo_reset(4);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo default reset setup (reset) failed: %d", ret);
+        return ret;
+    }
+#elif IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST_DISCARD)
+    /* Written to memory only, then reverted outside of
+     * zmk_runtime_combo_write()/reset() via the same
+     * zmk_custom_settings_discard_scope() + zmk_runtime_combo_invalidate_cache()
+     * pair the Save/Discard RPC handlers use, to exercise that cache
+     * invalidation path directly (see tests/discard). */
+    struct zmk_runtime_combo_config to_be_discarded = {
+        .enabled = true,
+        .key_position_len = 2,
+        .behavior = {.behavior_dev = key_press, .param1 = C},
+        .key_positions = {2, 3},
+    };
+    ret = zmk_runtime_combo_write(1, &to_be_discarded, false);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo discard setup (write) failed: %d", ret);
+        return ret;
+    }
+    uint32_t discard_affected = 0;
+    ret = zmk_custom_settings_discard_scope(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, NULL, NULL,
+                                            &discard_affected);
+    if (ret < 0) {
+        LOG_ERR("Runtime combo discard setup (discard_scope) failed: %d", ret);
+        return ret;
+    }
+    zmk_runtime_combo_invalidate_cache();
+#else
     /* Slots 1-4 exercise overlap resolution and per-combo overrides (see
      * tests/overrides). Skipped when a cormoran,runtime-combo-defaults node
      * is compiled in, since that fixture (tests/defaults) reuses these slot
@@ -1157,40 +1325,6 @@ static int runtime_combo_test_setup(void) {
         LOG_ERR("Runtime combo long-timeout setup failed: %d", ret);
         return ret;
     }
-#else
-    /* Exercises the DT-default read-path fallback (see tests/defaults):
-     * slot 1's default is left untouched, slot 2's is tombstoned, slot 3's
-     * is overridden to a different behavior, and slot 4's is tombstoned then
-     * restored via reset. Slot numbers and positions must match that
-     * fixture's cormoran,runtime-combo-defaults node. */
-    ret = zmk_runtime_combo_delete(2, false);
-    if (ret < 0) {
-        LOG_ERR("Runtime combo default tombstone setup failed: %d", ret);
-        return ret;
-    }
-
-    struct zmk_runtime_combo_config default_override = {
-        .enabled = true,
-        .key_position_len = 2,
-        .behavior = {.behavior_dev = key_press, .param1 = J},
-        .key_positions = {6, 7},
-    };
-    ret = zmk_runtime_combo_write(3, &default_override, false);
-    if (ret < 0) {
-        LOG_ERR("Runtime combo default override setup failed: %d", ret);
-        return ret;
-    }
-
-    ret = zmk_runtime_combo_delete(4, false);
-    if (ret < 0) {
-        LOG_ERR("Runtime combo default reset setup (delete) failed: %d", ret);
-        return ret;
-    }
-    ret = zmk_runtime_combo_reset(4);
-    if (ret < 0) {
-        LOG_ERR("Runtime combo default reset setup (reset) failed: %d", ret);
-        return ret;
-    }
 #endif
 
     runtime_combo_test_setup_done = true;
@@ -1207,6 +1341,9 @@ static int position_state_changed_listener(const zmk_event_t *eh) {
 #if IS_ENABLED(CONFIG_ZMK_RUNTIME_COMBO_TEST)
     runtime_combo_test_setup();
 #endif
+    /* First real position event is guaranteed to run after main() calls
+     * settings_load(), unlike any SYS_INIT hook. */
+    runtime_combo_cache_ensure_ready();
     return data->state ? position_state_down(data) : position_state_up(data);
 }
 
