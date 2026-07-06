@@ -34,23 +34,26 @@ stored by numeric slot internally and can also have a display name for the Web U
 The combo body is saved as one packed byte-array custom setting per combo slot:
 
 ```text
-version, flags, position_count, layer_mask, behavior_id, param1, param2,
-timeout_ms, require_prior_idle_ms, positions[]
+version, flags, position_count, layer_mask, timeout_ms,
+require_prior_idle_ms, positions[]
 ```
 
-`positions[]` are 16-bit values, and behavior parameters are 32-bit values.
-`timeout_ms` and `require_prior_idle_ms` are per-combo overrides; `0` means
-inherit the corresponding global setting. The `flags` byte also carries a
-tri-state slow-release override (inherit / on / off). The name is saved
-separately as a string-array custom setting with the same index. Timeout,
-slow-release, and require-prior-idle mode are saved as separate global custom
-settings and apply to every runtime combo unless overridden. The global
+`positions[]` are 16-bit values. `timeout_ms` and `require_prior_idle_ms` are
+per-combo overrides; `0` means inherit the corresponding global setting. The
+`flags` byte also carries a tri-state slow-release override (inherit / on /
+off).
+
+The behavior binding is stored separately as a
+[`BEHAVIOR`-typed custom setting](https://github.com/cormoran/zmk-feature-custom-settings)
+array with the same index, so its behavior local ID and parameters are
+validated against the target behavior's parameter metadata on write and exported
+as a first-class behavior binding rather than opaque bytes. The name is likewise
+saved as a string-array custom setting with the same index.
+
+Timeout, slow-release, and require-prior-idle mode are saved as separate global
+custom settings and apply to every runtime combo unless overridden. The global
 settings RPC response also reports `max_combo`, the maximum number of combo
 slots configured in the firmware.
-
-Records written by older module versions (storage version 2, without the
-per-combo override fields) are still read correctly; they behave as if every
-override is left at "inherit".
 
 ## Compile-Time Default Combos
 

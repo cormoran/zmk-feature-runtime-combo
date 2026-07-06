@@ -15,6 +15,7 @@
 #define ZMK_RUNTIME_COMBO_SUBSYSTEM_ID "cormoran__runtime_combo"
 #define ZMK_RUNTIME_COMBO_COMBOS_KEY "combos"
 #define ZMK_RUNTIME_COMBO_NAMES_KEY "names"
+#define ZMK_RUNTIME_COMBO_BEHAVIORS_KEY "behaviors"
 #define ZMK_RUNTIME_COMBO_TIMEOUT_MS_KEY "timeout_ms"
 #define ZMK_RUNTIME_COMBO_SLOW_RELEASE_KEY "slow_release"
 #define ZMK_RUNTIME_COMBO_REQUIRE_PRIOR_IDLE_MS_KEY "require_prior_idle_ms"
