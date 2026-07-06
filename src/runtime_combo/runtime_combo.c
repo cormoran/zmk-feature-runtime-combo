@@ -29,12 +29,14 @@
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
-#define RUNTIME_COMBO_STORAGE_VERSION 3
+/* The behavior binding is stored separately, as a parallel BEHAVIOR-typed
+ * custom-settings array (see ZMK_RUNTIME_COMBO_BEHAVIORS_KEY), so the packed
+ * body below only carries the rest of a combo's configuration. */
+#define RUNTIME_COMBO_STORAGE_VERSION 4
 #define RUNTIME_COMBO_FLAG_ENABLED BIT(0)
 #define RUNTIME_COMBO_FLAG_SLOW_RELEASE_OVERRIDE BIT(1)
 #define RUNTIME_COMBO_FLAG_SLOW_RELEASE_VALUE BIT(2)
-#define RUNTIME_COMBO_PACKED_HEADER_SIZE_V2 18
-#define RUNTIME_COMBO_PACKED_HEADER_SIZE 22
+#define RUNTIME_COMBO_PACKED_HEADER_SIZE 12
 #define RUNTIME_COMBO_PACKED_MAX_SIZE                                                              \
     (RUNTIME_COMBO_PACKED_HEADER_SIZE +                                                            \
      (CONFIG_ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO * sizeof(uint16_t)))
@@ -45,41 +47,62 @@ BUILD_ASSERT(RUNTIME_COMBO_PACKED_MAX_SIZE <= CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_M
 #define RUNTIME_COMBO_EMPTY_BYTES                                                                  \
     ((struct zmk_custom_setting_value){.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_BYTES, .size = 0})
 
-#define RUNTIME_COMBO_ARRAY_ELEMENT_DEFINE(_name, _key, _index, _value_type, _default_value)       \
-    static const struct zmk_custom_setting_constraint _name##_constraints[] = {                    \
-        ZMK_CUSTOM_SETTING_NO_CONSTRAINT};                                                         \
-    static const struct zmk_custom_setting_value _name##_default_static = _default_value;          \
-    STRUCT_SECTION_ITERABLE(zmk_custom_setting, _name) = {                                         \
-        .custom_subsystem_id = ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,                                     \
-        .key = _key "/" ZMK_CUSTOM_SETTINGS_STRINGIFY(_index),                                     \
-        .array_key = _key,                                                                         \
-        .array_index = (_index),                                                                   \
-        .array_max_size = CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS,                                     \
-        .default_array_size = 0,                                                                   \
-        .array_size = 0,                                                                           \
-        .persistent_array_size = 0,                                                                \
-        .value_type = _value_type,                                                                 \
-        .confidentiality = ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC,                          \
-        .read_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,                                 \
-        .write_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,                                \
-        .constraints = _name##_constraints,                                                        \
-        .constraints_count = ARRAY_SIZE(_name##_constraints),                                      \
-        .default_value = &_name##_default_static,                                                  \
-        .temp_slot = -1,                                                                           \
-    }
+/* ZMK_CUSTOM_SETTING_ARRAY_DEFINE seeds every element slot (all max_size, not
+ * just default_size) from defaults[index] at init, so each array needs a
+ * full-length defaults table. Bare aggregate initializers (not the
+ * ZMK_CUSTOM_SETTING_VALUE_* compound-literal macros) keep these valid
+ * constant initializers under strict -std=c11, matching the reason
+ * ZMK_CUSTOM_SETTING_ARRAY_DEFAULT_INT32_DEFINE avoids the macros. Every
+ * default is "empty"; combined with default_size 0 the arrays start empty and
+ * grow on write, so an un-grown element reads back -ENOENT and the read paths
+ * fall back to any compile-time default. */
+#define RUNTIME_COMBO_COMBOS_DEFAULT(i, _) {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_BYTES, .size = 0}
+#define RUNTIME_COMBO_NAMES_DEFAULT(i, _)                                                          \
+    {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_STRING, .size = 0, .string_value = ""}
+#define RUNTIME_COMBO_BEHAVIORS_DEFAULT(i, _)                                                      \
+    {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_BEHAVIOR,                                               \
+     .behavior_value = {.behavior_id = 0, .param1 = 0, .param2 = 0}}
 
-#define RUNTIME_COMBO_DEFINE_COMBO_SETTING(n, _)                                                   \
-    RUNTIME_COMBO_ARRAY_ELEMENT_DEFINE(runtime_combo_##n, ZMK_RUNTIME_COMBO_COMBOS_KEY, n,         \
-                                       ZMK_CUSTOM_SETTING_VALUE_TYPE_BYTES,                        \
-                                       RUNTIME_COMBO_EMPTY_BYTES);
+static const struct zmk_custom_setting_value
+    runtime_combo_combos_defaults[CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS] = {
+        LISTIFY(CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS, RUNTIME_COMBO_COMBOS_DEFAULT, (, ))};
+static const struct zmk_custom_setting_value
+    runtime_combo_names_defaults[CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS] = {
+        LISTIFY(CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS, RUNTIME_COMBO_NAMES_DEFAULT, (, ))};
+static const struct zmk_custom_setting_value
+    runtime_combo_behaviors_defaults[CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS] = {
+        LISTIFY(CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS, RUNTIME_COMBO_BEHAVIORS_DEFAULT, (, ))};
 
-#define RUNTIME_COMBO_DEFINE_NAME_SETTING(n, _)                                                    \
-    RUNTIME_COMBO_ARRAY_ELEMENT_DEFINE(runtime_combo_name_##n, ZMK_RUNTIME_COMBO_NAMES_KEY, n,     \
-                                       ZMK_CUSTOM_SETTING_VALUE_TYPE_STRING,                       \
-                                       ZMK_CUSTOM_SETTING_VALUE_STRING(""));
+/* One registration per array (custom-settings P3 API): each array owns a
+ * single contiguous backing buffer sized by max_count, instead of N separate
+ * per-element registrations. Element access still happens by base key + index
+ * via zmk_custom_setting_*_array_* below. The combo body and name arrays are
+ * joined by a parallel BEHAVIOR-typed array so each combo's behavior binding is
+ * stored and validated as a first-class binding rather than opaque bytes. */
+ZMK_CUSTOM_SETTING_ARRAY_DEFINE(runtime_combo_combos, ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+                                ZMK_RUNTIME_COMBO_COMBOS_KEY, ZMK_CUSTOM_SETTING_VALUE_TYPE_BYTES,
+                                CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS, 0,
+                                runtime_combo_combos_defaults,
+                                ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC,
+                                ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+                                ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+                                ZMK_CUSTOM_SETTING_NO_CONSTRAINT);
 
-LISTIFY(CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS, RUNTIME_COMBO_DEFINE_COMBO_SETTING, (), 0)
-LISTIFY(CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS, RUNTIME_COMBO_DEFINE_NAME_SETTING, (), 0)
+ZMK_CUSTOM_SETTING_ARRAY_DEFINE(runtime_combo_names, ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+                                ZMK_RUNTIME_COMBO_NAMES_KEY, ZMK_CUSTOM_SETTING_VALUE_TYPE_STRING,
+                                CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS, 0,
+                                runtime_combo_names_defaults,
+                                ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC,
+                                ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+                                ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+                                ZMK_CUSTOM_SETTING_NO_CONSTRAINT);
+
+ZMK_CUSTOM_SETTING_ARRAY_DEFINE(
+    runtime_combo_behaviors, ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, ZMK_RUNTIME_COMBO_BEHAVIORS_KEY,
+    ZMK_CUSTOM_SETTING_VALUE_TYPE_BEHAVIOR, CONFIG_ZMK_RUNTIME_COMBO_MAX_COMBOS, 0,
+    runtime_combo_behaviors_defaults, ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC,
+    ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE, ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+    ZMK_CUSTOM_SETTING_NO_CONSTRAINT);
 
 static const struct zmk_custom_setting_constraint runtime_combo_timeout_ms_constraints[] = {
     {.type = ZMK_CUSTOM_SETTING_CONSTRAINT_RANGE,
@@ -291,6 +314,60 @@ static const struct zmk_custom_setting *name_setting(uint32_t index) {
                                                  ZMK_RUNTIME_COMBO_NAMES_KEY, index);
 }
 
+static const struct zmk_custom_setting *behavior_setting(uint32_t index) {
+    return zmk_custom_setting_find_array_element(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+                                                 ZMK_RUNTIME_COMBO_BEHAVIORS_KEY, index);
+}
+
+/* Read a combo's behavior binding from its BEHAVIOR-typed array element and
+ * resolve the stored local ID back to a behavior device name. */
+static int read_combo_behavior(uint32_t index, struct zmk_behavior_binding *behavior) {
+    struct zmk_custom_setting_value value;
+    int ret = zmk_custom_setting_read_array_by_key(ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+                                                   ZMK_RUNTIME_COMBO_BEHAVIORS_KEY, index, &value);
+    if (ret < 0) {
+        return ret;
+    }
+    if (value.type != ZMK_CUSTOM_SETTING_VALUE_TYPE_BEHAVIOR) {
+        return -EINVAL;
+    }
+    zmk_behavior_local_id_t behavior_id = value.behavior_value.behavior_id;
+    const char *behavior_name = zmk_behavior_find_behavior_name_from_local_id(behavior_id);
+    if (!behavior_name) {
+        return -ENODEV;
+    }
+    *behavior = (struct zmk_behavior_binding){
+        .behavior_dev = behavior_name,
+        .param1 = value.behavior_value.param1,
+        .param2 = value.behavior_value.param2,
+    };
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_LOCAL_IDS_IN_BINDINGS)
+    behavior->local_id = behavior_id;
+#endif
+    return 0;
+}
+
+/* Persist a combo's behavior binding into its BEHAVIOR-typed array element,
+ * growing the array to cover `index` if needed. The custom-settings write path
+ * validates the binding against the target behavior's parameter metadata. */
+static int write_combo_behavior(uint32_t index, const struct zmk_behavior_binding *behavior,
+                                bool persist) {
+    zmk_behavior_local_id_t behavior_id = zmk_behavior_get_local_id(behavior->behavior_dev);
+    if (behavior_id == 0 || behavior_id == UINT16_MAX) {
+        return -ENODEV;
+    }
+    const struct zmk_custom_setting *setting = behavior_setting(index);
+    if (!setting) {
+        return -ENOENT;
+    }
+    struct zmk_custom_setting_value value =
+        ZMK_CUSTOM_SETTING_VALUE_BEHAVIOR(behavior_id, behavior->param1, behavior->param2);
+    uint32_t array_size = MAX(zmk_custom_setting_array_size(setting), index + 1);
+    return zmk_custom_setting_write_array_element(setting, &value, array_size,
+                                                  persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
+                                                          : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
+}
+
 static uint32_t runtime_combo_default_upper_bound(void) {
     uint32_t upper_bound = 0;
     for (size_t i = 0; i < RUNTIME_COMBO_DEFAULT_COUNT; i++) {
@@ -339,63 +416,43 @@ static int packed_to_combo(const struct zmk_custom_setting_value *value,
     }
 
     uint8_t version = value->bytes_value[0];
-    if (version != 2 && version != RUNTIME_COMBO_STORAGE_VERSION) {
+    if (version != RUNTIME_COMBO_STORAGE_VERSION) {
         return -EINVAL;
     }
-    size_t header_size =
-        version >= 3 ? RUNTIME_COMBO_PACKED_HEADER_SIZE : RUNTIME_COMBO_PACKED_HEADER_SIZE_V2;
-    if (value->size < header_size) {
+    if (value->size < RUNTIME_COMBO_PACKED_HEADER_SIZE) {
         return -EINVAL;
     }
 
     uint8_t key_position_len = value->bytes_value[2];
     if (key_position_len < 2 ||
         key_position_len > CONFIG_ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO ||
-        value->size != header_size + key_position_len * sizeof(uint16_t)) {
+        value->size != RUNTIME_COMBO_PACKED_HEADER_SIZE + key_position_len * sizeof(uint16_t)) {
         return -EINVAL;
     }
 
     uint8_t flags = value->bytes_value[1];
     enum zmk_runtime_combo_slow_release_override slow_release_override =
         ZMK_RUNTIME_COMBO_SLOW_RELEASE_INHERIT;
-    uint16_t timeout_ms = 0;
-    uint16_t require_prior_idle_ms = 0;
-    if (version >= 3) {
-        if (flags & RUNTIME_COMBO_FLAG_SLOW_RELEASE_OVERRIDE) {
-            slow_release_override = (flags & RUNTIME_COMBO_FLAG_SLOW_RELEASE_VALUE)
-                                        ? ZMK_RUNTIME_COMBO_SLOW_RELEASE_ON
-                                        : ZMK_RUNTIME_COMBO_SLOW_RELEASE_OFF;
-        }
-        timeout_ms = get_u16(&value->bytes_value[18]);
-        require_prior_idle_ms = get_u16(&value->bytes_value[20]);
+    if (flags & RUNTIME_COMBO_FLAG_SLOW_RELEASE_OVERRIDE) {
+        slow_release_override = (flags & RUNTIME_COMBO_FLAG_SLOW_RELEASE_VALUE)
+                                    ? ZMK_RUNTIME_COMBO_SLOW_RELEASE_ON
+                                    : ZMK_RUNTIME_COMBO_SLOW_RELEASE_OFF;
     }
 
+    /* The behavior binding lives in a parallel BEHAVIOR-typed array and is
+     * filled in by the caller (see read_combo_behavior). */
     *combo = (struct zmk_runtime_combo_config){
         .enabled = (flags & RUNTIME_COMBO_FLAG_ENABLED) != 0,
         .key_position_len = key_position_len,
         .layer_mask = get_u32(&value->bytes_value[4]),
-        .behavior =
-            {
-                .param1 = get_u32(&value->bytes_value[10]),
-                .param2 = get_u32(&value->bytes_value[14]),
-            },
-        .timeout_ms = timeout_ms,
-        .require_prior_idle_ms = require_prior_idle_ms,
+        .timeout_ms = get_u16(&value->bytes_value[8]),
+        .require_prior_idle_ms = get_u16(&value->bytes_value[10]),
         .slow_release_override = slow_release_override,
     };
 
-    zmk_behavior_local_id_t behavior_id = get_u16(&value->bytes_value[8]);
-    const char *behavior_name = zmk_behavior_find_behavior_name_from_local_id(behavior_id);
-    if (!behavior_name) {
-        return -ENODEV;
-    }
-    combo->behavior.behavior_dev = behavior_name;
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_LOCAL_IDS_IN_BINDINGS)
-    combo->behavior.local_id = behavior_id;
-#endif
-
     for (uint8_t i = 0; i < key_position_len; i++) {
-        combo->key_positions[i] = get_u16(&value->bytes_value[header_size + i * sizeof(uint16_t)]);
+        combo->key_positions[i] =
+            get_u16(&value->bytes_value[RUNTIME_COMBO_PACKED_HEADER_SIZE + i * sizeof(uint16_t)]);
     }
     return 0;
 }
@@ -405,14 +462,6 @@ static int combo_to_packed(const struct zmk_runtime_combo_config *combo,
     if (combo->key_position_len < 2 ||
         combo->key_position_len > CONFIG_ZMK_RUNTIME_COMBO_MAX_POSITIONS_PER_COMBO) {
         return -EINVAL;
-    }
-    zmk_behavior_local_id_t behavior_id = zmk_behavior_get_local_id(combo->behavior.behavior_dev);
-    if (behavior_id == 0 || behavior_id == UINT16_MAX) {
-        return -ENODEV;
-    }
-    int ret = zmk_behavior_validate_binding(&combo->behavior);
-    if (ret < 0) {
-        return ret;
     }
 
     for (uint8_t i = 0; i < combo->key_position_len; i++) {
@@ -437,11 +486,8 @@ static int combo_to_packed(const struct zmk_runtime_combo_config *combo,
     value->bytes_value[2] = combo->key_position_len;
     value->bytes_value[3] = 0;
     put_u32(&value->bytes_value[4], combo->layer_mask);
-    put_u16(&value->bytes_value[8], behavior_id);
-    put_u32(&value->bytes_value[10], combo->behavior.param1);
-    put_u32(&value->bytes_value[14], combo->behavior.param2);
-    put_u16(&value->bytes_value[18], combo->timeout_ms);
-    put_u16(&value->bytes_value[20], combo->require_prior_idle_ms);
+    put_u16(&value->bytes_value[8], combo->timeout_ms);
+    put_u16(&value->bytes_value[10], combo->require_prior_idle_ms);
 
     for (uint8_t i = 0; i < combo->key_position_len; i++) {
         put_u16(&value->bytes_value[RUNTIME_COMBO_PACKED_HEADER_SIZE + i * sizeof(uint16_t)],
@@ -478,7 +524,13 @@ int zmk_runtime_combo_read(uint32_t index, struct zmk_runtime_combo_config *comb
             return 0;
         }
     }
-    return packed_to_combo(&value, combo);
+    ret = packed_to_combo(&value, combo);
+    if (ret < 0 || combo->key_position_len == 0) {
+        /* An empty (size 0) record with no default decodes to a zeroed combo
+         * that has no behavior binding to read. */
+        return ret;
+    }
+    return read_combo_behavior(index, &combo->behavior);
 }
 
 int zmk_runtime_combo_read_name(uint32_t index, char *name, size_t name_size) {
@@ -650,8 +702,19 @@ int zmk_runtime_combo_write(uint32_t index, const struct zmk_runtime_combo_confi
         return -EINVAL;
     }
 
+    /* Resolve and validate the behavior binding up front so an invalid binding
+     * fails before any array element is written or grown. */
+    zmk_behavior_local_id_t behavior_id = zmk_behavior_get_local_id(combo->behavior.behavior_dev);
+    if (behavior_id == 0 || behavior_id == UINT16_MAX) {
+        return -ENODEV;
+    }
+    int ret = zmk_behavior_validate_binding(&combo->behavior);
+    if (ret < 0) {
+        return ret;
+    }
+
     struct zmk_custom_setting_value value;
-    int ret = combo_to_packed(combo, &value);
+    ret = combo_to_packed(combo, &value);
     if (ret < 0) {
         return ret;
     }
@@ -665,13 +728,20 @@ int zmk_runtime_combo_write(uint32_t index, const struct zmk_runtime_combo_confi
     int write_ret = zmk_custom_setting_write_array_element(
         setting, &value, array_size,
         persist ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST : ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
+    int behavior_ret = write_combo_behavior(index, &combo->behavior, persist);
     int name_ret = ensure_name_array_size(index, persist);
     /* The in-memory value updates even if persisting to flash failed
      * (zmk_custom_setting_write_array_element applies memory_value before
      * attempting the flash save), so the cache must refresh regardless of
-     * either call's outcome. */
+     * any call's outcome. */
     runtime_combo_cache_rebuild_slot(index);
-    return write_ret < 0 ? write_ret : name_ret;
+    if (write_ret < 0) {
+        return write_ret;
+    }
+    if (behavior_ret < 0) {
+        return behavior_ret;
+    }
+    return name_ret;
 }
 
 int zmk_runtime_combo_write_name(uint32_t index, const char *name, bool persist) {
