@@ -104,75 +104,32 @@ ZMK_CUSTOM_SETTING_ARRAY_DEFINE(
     ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE, ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
     ZMK_CUSTOM_SETTING_NO_CONSTRAINT);
 
-static const struct zmk_custom_setting_constraint runtime_combo_timeout_ms_constraints[] = {
-    {.type = ZMK_CUSTOM_SETTING_CONSTRAINT_RANGE,
-     .range = {.min = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32, .int32_value = 1},
-               .max = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32, .int32_value = 65535}}},
-};
+/*
+ * Global (non per-combo) tuning settings. Registered through the public
+ * ZMK_CUSTOM_SETTING_DEFINE_WITH_CONSTRAINTS macro: since the custom-settings
+ * simplification (P4) the descriptor is a const, flash-resident object with a
+ * separate RAM state block, so it can no longer be hand-built as a
+ * STRUCT_SECTION_ITERABLE with an inline `.temp_slot`/`.default_value`.
+ */
+ZMK_CUSTOM_SETTING_DEFINE_WITH_CONSTRAINTS(
+    runtime_combo_timeout_ms, ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, ZMK_RUNTIME_COMBO_TIMEOUT_MS_KEY,
+    ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
+    ZMK_CUSTOM_SETTING_VALUE_INT32(CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_TIMEOUT_MS),
+    ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC, ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+    ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE, ZMK_CUSTOM_SETTING_RANGE_INT32(1, 65535));
 
-static const struct zmk_custom_setting_value runtime_combo_timeout_ms_default_value = {
-    .type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
-    .int32_value = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_TIMEOUT_MS};
+ZMK_CUSTOM_SETTING_DEFINE_WITH_CONSTRAINTS(
+    runtime_combo_slow_release, ZMK_RUNTIME_COMBO_SUBSYSTEM_ID, ZMK_RUNTIME_COMBO_SLOW_RELEASE_KEY,
+    ZMK_CUSTOM_SETTING_VALUE_TYPE_BOOL, ZMK_CUSTOM_SETTING_VALUE_BOOL(false),
+    ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC, ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+    ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE, ZMK_CUSTOM_SETTING_NO_CONSTRAINT);
 
-STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_timeout_ms) = {
-    .custom_subsystem_id = ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
-    .key = ZMK_RUNTIME_COMBO_TIMEOUT_MS_KEY,
-    .array_index = ZMK_CUSTOM_SETTING_ARRAY_NONE,
-    .value_type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
-    .confidentiality = ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC,
-    .read_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
-    .write_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
-    .constraints = runtime_combo_timeout_ms_constraints,
-    .constraints_count = ARRAY_SIZE(runtime_combo_timeout_ms_constraints),
-    .default_value = &runtime_combo_timeout_ms_default_value,
-    .temp_slot = -1,
-};
-
-static const struct zmk_custom_setting_constraint runtime_combo_slow_release_constraints[] = {
-    {.type = ZMK_CUSTOM_SETTING_CONSTRAINT_NONE},
-};
-
-static const struct zmk_custom_setting_value runtime_combo_slow_release_default_value = {
-    .type = ZMK_CUSTOM_SETTING_VALUE_TYPE_BOOL, .bool_value = false};
-
-STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_slow_release) = {
-    .custom_subsystem_id = ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
-    .key = ZMK_RUNTIME_COMBO_SLOW_RELEASE_KEY,
-    .array_index = ZMK_CUSTOM_SETTING_ARRAY_NONE,
-    .value_type = ZMK_CUSTOM_SETTING_VALUE_TYPE_BOOL,
-    .confidentiality = ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC,
-    .read_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
-    .write_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
-    .constraints = runtime_combo_slow_release_constraints,
-    .constraints_count = ARRAY_SIZE(runtime_combo_slow_release_constraints),
-    .default_value = &runtime_combo_slow_release_default_value,
-    .temp_slot = -1,
-};
-
-static const struct zmk_custom_setting_constraint
-    runtime_combo_require_prior_idle_ms_constraints[] = {
-        {.type = ZMK_CUSTOM_SETTING_CONSTRAINT_RANGE,
-         .range = {.min = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32, .int32_value = 0},
-                   .max = {.type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32, .int32_value = 65535}}},
-};
-
-static const struct zmk_custom_setting_value runtime_combo_require_prior_idle_ms_default_value = {
-    .type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
-    .int32_value = CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_REQUIRE_PRIOR_IDLE_MS};
-
-STRUCT_SECTION_ITERABLE(zmk_custom_setting, runtime_combo_require_prior_idle_ms) = {
-    .custom_subsystem_id = ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
-    .key = ZMK_RUNTIME_COMBO_REQUIRE_PRIOR_IDLE_MS_KEY,
-    .array_index = ZMK_CUSTOM_SETTING_ARRAY_NONE,
-    .value_type = ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
-    .confidentiality = ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC,
-    .read_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
-    .write_permission = ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
-    .constraints = runtime_combo_require_prior_idle_ms_constraints,
-    .constraints_count = ARRAY_SIZE(runtime_combo_require_prior_idle_ms_constraints),
-    .default_value = &runtime_combo_require_prior_idle_ms_default_value,
-    .temp_slot = -1,
-};
+ZMK_CUSTOM_SETTING_DEFINE_WITH_CONSTRAINTS(
+    runtime_combo_require_prior_idle_ms, ZMK_RUNTIME_COMBO_SUBSYSTEM_ID,
+    ZMK_RUNTIME_COMBO_REQUIRE_PRIOR_IDLE_MS_KEY, ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32,
+    ZMK_CUSTOM_SETTING_VALUE_INT32(CONFIG_ZMK_RUNTIME_COMBO_DEFAULT_REQUIRE_PRIOR_IDLE_MS),
+    ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC, ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+    ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE, ZMK_CUSTOM_SETTING_RANGE_INT32(0, 65535));
 
 /* Compile-time defaults from an optional `cormoran,runtime-combo-defaults` node. */
 struct zmk_runtime_combo_default {
